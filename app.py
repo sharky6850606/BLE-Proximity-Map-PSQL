@@ -292,6 +292,63 @@ def analytics_page():
 def healthz():
     return {"ok": True}
 
+@app.route("/api/rename-beacon", methods=["POST"])
+def api_rename_beacon():
+    data = request.get_json(force=True)
+
+    beacon_id = data.get("beacon_id") or data.get("id")
+    name = data.get("name")
+
+    if not beacon_id or not name:
+        return jsonify({"error": "invalid payload"}), 400
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO beacon_names (id, name)
+            VALUES (%s, %s)
+            ON CONFLICT (id)
+            DO UPDATE SET name = EXCLUDED.name
+            """,
+            (beacon_id, name),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"})
+
+@app.route("/api/rename-device", methods=["POST"])
+def api_rename_device():
+    data = request.get_json(force=True)
+
+    device_id = data.get("device_id") or data.get("id")
+    name = data.get("name")
+    color = data.get("color")
+
+    if not device_id:
+        return jsonify({"error": "invalid payload"}), 400
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO devices (id, name, color)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (id)
+            DO UPDATE SET
+                name = EXCLUDED.name,
+                color = EXCLUDED.color
+            """,
+            (device_id, name, color),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
