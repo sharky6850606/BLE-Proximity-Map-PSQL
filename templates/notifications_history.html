@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Notifications History</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <style>
+    body { background:#020617; color:#e5e7eb; padding:16px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color:#60a5fa; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    table { width:100%; border-collapse: collapse; margin-top:12px; font-size:0.9rem; }
+    th, td { padding:8px 10px; border-bottom:1px solid rgba(148,163,184,0.3); text-align:left; }
+    th { background:#020617; position:sticky; top:0; }
+    .back-link { margin-bottom:12px; display:inline-block; }
+  </style>
+</head>
+<body>
+  <a href="/map" class="back-link">← Back to map</a>
+  <form method="get" style="margin-top:8px; margin-bottom:12px;">
+    <input type="text" name="q" placeholder="Search by beacon, type or time" value="{{ query or '' }}" style="padding:6px 8px; border-radius:4px; border:1px solid #4b5563; background:#020617; color:#e5e7eb; width:260px;" />
+    <button type="submit" style="padding:6px 10px; border-radius:4px; border:none; background:#3b82f6; color:#f9fafb; cursor:pointer;">Search</button>
+  </form>
+
+  <a href="{{ url_for('map.map_page') }}" class="back-link">← Back to map</a>
+  <h2>Notifications History</h2>
+  {% if not notifications %}
+    <p>No notifications stored yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Beacon</th>
+          <th>Event time</th>
+          <th>Distance (m)</th>
+          <th>Logged at</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in notifications %}
+        <tr>
+          <td>{{ n[0] }}</td>
+          <td>{{ n[1] }}</td>
+          <td>{{ n[2] }}</td>
+          <td>{{ n[3] }}</td>
+          <td>{% if n[4] is not none %}{{ "%.2f"|format(n[4]) }}{% else %}-{% endif %}</td>
+          <td>{{ n[5] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</body>
+</html>
