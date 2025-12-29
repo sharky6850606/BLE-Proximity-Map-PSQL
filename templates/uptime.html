@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>System Uptime / Health</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <style>
+    body { background:#020617; color:#e5e7eb; padding:16px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color:#60a5fa; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    table { width:100%; border-collapse: collapse; margin-top:12px; font-size:0.9rem; }
+    th, td { padding:8px 10px; border-bottom:1px solid rgba(148,163,184,0.3); text-align:left; }
+    th { background:#020617; position:sticky; top:0; }
+    .back-link { margin-bottom:12px; display:inline-block; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:0.8rem; }
+    .pill-ok { background:rgba(22,163,74,0.15); color:#4ade80; border:1px solid rgba(34,197,94,0.5); }
+    .pill-warn { background:rgba(234,179,8,0.15); color:#facc15; border:1px solid rgba(250,204,21,0.5); }
+    .pill-bad { background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(248,113,113,0.5); }
+    .summary { margin-top:8px; margin-bottom:12px; font-size:0.9rem; }
+    .summary strong { font-weight:600; }
+  </style>
+</head>
+<body>
+  <a href="/map" class="back-link">← Back to map</a>
+  <h1 style="font-size:1.25rem; margin-bottom:4px;">System uptime / health</h1>
+  <p style="margin:0; font-size:0.9rem; color:#9ca3af;">
+    Snapshots are recorded automatically from live data whenever new telemetry arrives.
+  </p>
+
+  {% if logs %}
+    {% set latest = logs[0] %}
+    {% set latest_status = latest[4] %}
+    <div class="summary">
+      <strong>Latest snapshot:</strong>
+      {{ latest[1] }} —
+      Devices: {{ latest[2] }}, Beacons: {{ latest[3] }}
+      {% if latest_status == "OK" %}
+        <span class="pill pill-ok">{{ latest_status }}</span>
+      {% elif latest_status in ["NO_DEVICES", "NO_BEACONS"] %}
+        <span class="pill pill-warn">{{ latest_status }}</span>
+      {% else %}
+        <span class="pill pill-bad">{{ latest_status }}</span>
+      {% endif %}
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Logged at</th>
+          <th>Devices</th>
+          <th>Beacons</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in logs %}
+        <tr>
+          <td>{{ row[0] }}</td>
+          <td>{{ row[1] }}</td>
+          <td>{{ row[2] }}</td>
+          <td>{{ row[3] }}</td>
+          <td>
+            {% if row[4] == "OK" %}
+              <span class="pill pill-ok">{{ row[4] }}</span>
+            {% elif row[4] in ["NO_DEVICES", "NO_BEACONS"] %}
+              <span class="pill pill-warn">{{ row[4] }}</span>
+            {% else %}
+              <span class="pill pill-bad">{{ row[4] }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="summary">No uptime logs have been recorded yet. Once data starts flowing from your devices, snapshots will appear here.</p>
+  {% endif %}
+</body>
+</html>
