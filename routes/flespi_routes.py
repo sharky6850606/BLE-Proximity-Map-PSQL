@@ -27,47 +27,100 @@ def flespi_receiver():
 
     now_ts = int(time.time())
     processed = 0
-    seen = set()
+    seen_devices = set()
 
-    for raw in msgs:
-        if not isinstance(raw, dict):
-            continue
-        snap = simplify_message(raw)
-        ident = snap.get("ident")
-        if not ident:
-            continue
-        latest_messages[ident] = snap
-        seen.add(ident)
-        processed += 1
+    conn = get_db()
 
-    # Persist online state best-effort
-    conn = None
     try:
-        conn = get_db()
-        for ident in seen:
+        for raw in msgs:
+            if not isinstance(raw, dict):
+                continue
+
+            snap = simplify_message(raw)
+            device_ident = snap.get("ident")
+            if not device_ident:
+                continue
+
+            # ---------------------------
+            # Track latest device message
+            # ---------------------------
+            latest_messages[device_ident] = snap
+            seen_devices.add(device_ident)
+            processed += 1
+
+            # ---------------------------
+            # DEVICE STATE (ONLINE)
+            # ---------------------------
             conn.execute(
-                "INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT(device_key) DO UPDATE SET "
-                "state=excluded.state, last_change_ts=excluded.last_change_ts, device_ident=excluded.device_ident, "
-                "online=excluded.online, last_seen_ts=excluded.last_seen_ts, last_online_ts=excluded.last_online_ts",
-                (ident, "online", now_ts, ident, 1, now_ts, now_ts),
+                """
+                INSERT INTO device_states
+                    (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(device_key)
+                DO UPDATE SET
+                    state = EXCLUDED.state,
+                    last_change_ts = EXCLUDED.last_change_ts,
+                    device_ident = EXCLUDED.device_ident,
+                    online = EXCLUDED.online,
+                    last_seen_ts = EXCLUDED.last_seen_ts,
+                    last_online_ts = EXCLUDED.last_online_ts
+                """,
+                (
+                    device_ident,
+                    "online",
+                    now_ts,
+                    device_ident,
+                    1,
+                    now_ts,
+                    now_ts,
+                ),
             )
+
+            # ---------------------------
+            # BEACON STATE (THIS WAS MISSING)
+            # ---------------------------
+            beacons = snap.get("beacons") or []
+            for b in beacons:
+                beacon_id = b.get("id") or b.get("beacon_id")
+                if not beacon_id:
+                    continue
+
+                conn.execute(
+                    """
+                    INSERT INTO beacon_states
+                        (beacon_key, state, last_change_ts, active)
+                    VALUES (%s,%s,%s,1)
+                    ON CONFLICT (beacon_key)
+                    DO UPDATE SET
+                        state = 'in',
+                        last_change_ts = EXCLUDED.last_change_ts,
+                        active = 1
+                    """,
+                    (
+                        beacon_id,
+                        "in",
+                        now_ts,
+                    ),
+                )
+
         conn.commit()
+
     except Exception as e:
-        print(f"[warn] device_states write failed: {e}")
+        print(f"[warn] flespi processing failed: {e}")
         try:
-            if conn:
-                conn.rollback()
+            conn.rollback()
         except Exception:
             pass
+
     finally:
         try:
-            if conn:
-                conn.close()
+            conn.close()
         except Exception:
             pass
 
+    # ---------------------------
+    # UPTIME SNAPSHOT
+    # ---------------------------
     try:
         log_uptime_snapshot()
     except Exception as e:
