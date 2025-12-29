@@ -10,7 +10,13 @@ DB_PATH = os.getenv("DB_PATH", "beacons.db")  # used only if DATABASE_URL is not
 # Time / TTL
 # =============================
 SAMOA_OFFSET_HOURS = int(os.getenv("SAMOA_OFFSET_HOURS", "13"))
+
+# Base TTL (kept for compatibility)
 TTL_SECONDS = int(os.getenv("TTL_SECONDS", "420"))  # 7 minutes
+
+# Evaluator expects these names
+BEACON_TTL_SECONDS = int(os.getenv("BEACON_TTL_SECONDS", str(TTL_SECONDS)))
+DEVICE_TTL_SECONDS = int(os.getenv("DEVICE_TTL_SECONDS", str(TTL_SECONDS)))
 
 # =============================
 # RSSI distance model (simple)
@@ -24,8 +30,9 @@ PATH_LOSS_N = float(os.getenv("PATH_LOSS_N", "2.0"))
 REPORTS_DIR = os.getenv("REPORTS_DIR", "reports")
 ACTIVITY_REPORTS_DIR = os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports")
 
-
+# =============================
 # Evaluator settings
-STILL_INTERVAL_SECONDS = int(os.getenv('STILL_INTERVAL_SECONDS', '900'))  # 15 minutes
-DUP_SUPPRESS_SECONDS = int(os.getenv('DUP_SUPPRESS_SECONDS', '30'))
-EVALUATOR_INTERVAL_SECONDS = int(os.getenv('EVALUATOR_INTERVAL_SECONDS', '60'))
+# =============================
+STILL_INTERVAL_SECONDS = int(os.getenv("STILL_INTERVAL_SECONDS", "900"))  # 15 minutes
+DUP_SUPPRESS_SECONDS = int(os.getenv("DUP_SUPPRESS_SECONDS", "30"))
+EVALUATOR_INTERVAL_SECONDS = int(os.getenv("EVALUATOR_INTERVAL_SECONDS", "60"))
