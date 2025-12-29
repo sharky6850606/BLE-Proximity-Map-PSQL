@@ -89,21 +89,27 @@ def data():
 def rename_beacon():
     data = request.get_json(silent=True) or {}
 
-    beacon_id = (data.get("id") or data.get("beacon_id") or "").strip()
+    # FORCE the real beacon ID (must match snap["beacons"][i]["id"])
+    beacon_id = (
+        data.get("id")
+        or data.get("beacon_id")
+        or data.get("ident")
+        or ""
+    ).strip()
+
     new_name = (data.get("name") or "").strip()
 
     if not beacon_id:
-        return jsonify({"error": "missing id"}), 400
+        return jsonify({"error": "missing beacon id"}), 400
 
     conn = get_db()
     try:
-        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
         conn.execute(
-            f"""
+            """
             INSERT INTO beacon_names (id, name)
-            VALUES ({ph},{ph})
-            ON CONFLICT(id)
-            DO UPDATE SET name = excluded.name
+            VALUES (%s, %s)
+            ON CONFLICT (id)
+            DO UPDATE SET name = EXCLUDED.name
             """,
             (beacon_id, new_name),
         )
@@ -111,7 +117,9 @@ def rename_beacon():
     finally:
         conn.close()
 
+    print("[rename_beacon] saved:", beacon_id, new_name)
     return jsonify({"status": "ok"})
+
 
 
 # -------------------------
@@ -121,24 +129,24 @@ def rename_beacon():
 def rename_device():
     data = request.get_json(silent=True) or {}
 
-    device_id = (data.get("id") or data.get("device_id") or "").strip()
+    # FORCE ident usage
+    device_id = (data.get("ident") or data.get("id") or data.get("device_id") or "").strip()
     new_name = (data.get("name") or "").strip()
     color = (data.get("color") or "").strip() or None
 
     if not device_id:
-        return jsonify({"error": "missing id"}), 400
+        return jsonify({"error": "missing ident"}), 400
 
     conn = get_db()
     try:
-        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
         conn.execute(
-            f"""
+            """
             INSERT INTO devices (id, name, color)
-            VALUES ({ph},{ph},{ph})
-            ON CONFLICT(id)
+            VALUES (%s,%s,%s)
+            ON CONFLICT (id)
             DO UPDATE SET
-                name = excluded.name,
-                color = excluded.color
+                name = EXCLUDED.name,
+                color = EXCLUDED.color
             """,
             (device_id, new_name, color),
         )
@@ -146,4 +154,5 @@ def rename_device():
     finally:
         conn.close()
 
+    print("[rename_device] saved:", device_id, new_name)
     return jsonify({"status": "ok"})
