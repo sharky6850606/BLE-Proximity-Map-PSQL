@@ -18,37 +18,21 @@ def map_page():
 
 @map_bp.route("/data")
 def data():
-    """
-    Hybrid data source:
-    - Live positions from latest_messages (real-time map)
-    - Names/colors from DB (rename persistence)
-    - Beacon names from DB
-    """
-
     snapshot = dict(latest_messages)
 
     beacon_names = {}
-    devices_meta = {}
+    devices = {}
 
     conn = None
     try:
         conn = get_db()
-
-        # ---- Beacon rename table ----
         rows = conn.execute("SELECT id, name FROM beacon_names").fetchall()
-        for bid, nm in rows:
-            if bid:
-                beacon_names[str(bid)] = nm or ""
+        beacon_names = {str(bid): (nm or "") for (bid, nm) in rows if bid is not None}
 
-        # ---- Device rename + color ----
         rows = conn.execute("SELECT id, name, color FROM devices").fetchall()
         for did, nm, col in rows:
-            if did:
-                devices_meta[str(did)] = {
-                    "name": nm or "",
-                    "color": col or "",
-                }
-
+            if did is not None:
+                devices[str(did)] = {"name": nm or "", "color": col or ""}
     except Exception as e:
         print("[warn] /data db read failed:", e)
     finally:
@@ -59,28 +43,21 @@ def data():
             pass
 
     out = []
-
     for did, snap in snapshot.items():
         if did == "DAILY_REPORT" or not isinstance(snap, dict):
             continue
 
-        did = str(did)
-        meta = devices_meta.get(did, {})
+        did_str = str(did).strip()  # ✅ FORCE STRING KEY
+        meta = devices.get(did_str, {})
 
         d = dict(snap)
-        d["id"] = did
-
-        # Apply rename + color if exists
+        d["id"] = did_str
+        d["ident"] = did_str
         d["name"] = meta.get("name") or None
         d["color"] = meta.get("color") or None
-
         out.append(d)
 
-    return jsonify({
-        "devices": out,
-        "beacon_names": beacon_names
-    })
-
+    return jsonify({"devices": out, "beacon_names": beacon_names})
 
 # -------------------------
 # Rename Beacon
