@@ -1,0 +1,653 @@
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#app-container {
+    display: flex;
+    height: 100%;
+}
+
+#sidebar {
+    width: 320px;
+    background: #101827;
+    color: #e5e7eb;
+    padding: 16px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#sidebar h1 {
+    font-size: 20px;
+    margin: 0 0 8px 0;
+}
+
+#sidebar h2 {
+    font-size: 15px;
+    margin: 12px 0 4px 0;
+    color: #9ca3af;
+}
+
+.stat {
+    font-size: 13px;
+}
+
+.stat .label {
+    color: #9ca3af;
+    margin-right: 4px;
+}
+
+#device-list, #beacon-list {
+    flex: 1;
+    overflow-y: auto;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 8px;
+    font-size: 12px;
+}
+
+.device-item, .beacon-item {
+    padding: 6px 8px;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    background: rgba(31, 41, 55, 0.9);
+}
+
+.device-item strong {
+    color: #fbbf24;
+}
+
+.beacon-item strong {
+    color: #34d399;
+}
+
+#map {
+    flex: 1;
+    height: 100%;
+}
+
+
+/* Beacon management controls + rename UI */
+#beacon-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+#beacon-controls input,
+#beacon-controls select {
+  padding: 4px 6px;
+  font-size: 0.8rem;
+}
+
+.beacon-id {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.rename-row {
+  margin-top: 4px;
+}
+
+.rename-input {
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  max-width: 140px;
+}
+
+.rename-btn {
+  margin-left: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+#alert-box { font-size: 0.9rem; }
+
+
+#notification-bar {
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+#notif-button {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: #1f2937;
+  color: #f9fafb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+#notif-count {
+  background: #ef4444;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+
+#notifications-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 320px;
+  max-height: 60vh;
+  background: #111827;
+  color: #f9fafb;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+#notifications-panel.hidden {
+  display: none;
+}
+
+.notif-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+#notifications-list {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.notification-item {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(156,163,175,0.2);
+}
+
+.notification-item span.time {
+  color: #9ca3af;
+  margin-right: 4px;
+}
+
+.notification-item span.type-left {
+  color: #f97316;
+}
+
+.notification-item span.type-in {
+  color: #22c55e;
+}
+
+.notif-clear-btn {
+  align-self: flex-end;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+}
+
+#toast-container {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 1100;
+}
+
+.toast {
+  background: #111827;
+  color: #f9fafb;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+  opacity: 0.95;
+}
+
+.toast-left {
+  border-left: 3px solid #f97316;
+}
+
+.toast-in {
+  border-left: 3px solid #22c55e;
+}
+
+
+
+#reports-panel {
+  position: fixed;
+  right: 360px;
+  bottom: 12px;
+  width: 320px;
+  max-height: 60vh;
+  background: #1f2937;
+  color: #f9fafb;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+#reports-panel.hidden {
+  display: none;
+}
+
+#reports-list {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.report-item {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(156,163,175,0.2);
+}
+
+#sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.header-menu-btn {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  color: #f9fafb;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.header-icon-btn {
+  border: none;
+  background: #1f2937;
+  color: #f9fafb;
+  border-radius: 999px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.main-title {
+  text-align: center;
+  margin: 4px 0 10px 0;
+  font-size: 20px;
+}
+
+/* Make header notif button compact instead of full width */
+#sidebar-header #notif-button {
+  width: auto;
+  justify-content: center;
+}
+
+
+.beacon-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+}
+
+.beacon-battery {
+  font-size: 0.75rem;
+  color: #34d399;
+}
+
+
+#menu-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 3000;
+}
+
+#menu-panel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 260px;
+  background: #111827;
+  padding: 16px 16px 20px 16px;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  z-index: 4000;
+  box-shadow: 5px 0 18px rgba(0,0,0,0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#menu-panel.open {
+  transform: translateX(0);
+}
+
+.menu-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.menu-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.menu-close {
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.menu-item {
+  background: #1f2937;
+  border: none;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  text-align: left;
+  border-radius: 8px;
+  color: #f9fafb;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: #374151;
+}
+
+/* === UI CLEANUP PATCH === */
+
+#device-list, #beacon-list {
+  max-height: 28vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.panel {
+  background: #1f2937;
+  padding: 10px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+#sidebar {
+  gap: 14px;
+}
+
+.beacon-item, .device-item {
+  padding: 10px;
+  background: #162033;
+  border-radius: 8px;
+}
+
+
+.hidden{display:none !important;}
+
+.devices-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.devices-header-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.pill-btn {
+  border-radius: 999px;
+  border: 1px solid #4b5563;
+  background: #020617;
+  color: #e5e7eb;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.pill-btn-active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #f9fafb;
+}
+
+.device-block {
+  background: #111827;
+  border-radius: 10px;
+  border: 1px solid rgba(75,85,99,0.8);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.device-block-header {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.device-color-swatch {
+  width: 8px;
+  height: 40px;
+  border-radius: 999px;
+  margin-right: 8px;
+}
+
+.device-block-main {
+  flex: 1;
+}
+
+.device-block-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.device-block-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.device-block-sub {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.device-empty {
+  font-size: 0.75rem;
+  color: #6b7280;
+  padding: 4px 0 0 18px;
+}
+
+.device-beacons-list {
+  margin-top: 6px;
+  padding-left: 16px;
+}
+
+.beacon-row {
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  padding: 3px 0;
+}
+
+.beacon-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin-right: 6px;
+}
+
+.beacon-name {
+  color: #e5e7eb;
+}
+
+/* Pencil icon buttons (if not already added) */
+.icon-button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 6px;
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+.icon-button:hover {
+  color: #f9fafb;
+}
+
+/* Rename modal (if not already defined) */
+.rename-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  z-index: 5000;
+}
+
+.rename-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5001;
+}
+
+.rename-modal-inner {
+  background: #020617;
+  border-radius: 10px;
+  border: 1px solid #4b5563;
+  padding: 16px 18px;
+  width: 260px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.9);
+}
+
+.rename-modal-inner h3 {
+  margin: 0 0 10px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+#rename-modal-input {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  border: 1px solid #4b5563;
+  background: #020617;
+  color: #f9fafb;
+}
+
+.rename-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.rename-modal-actions button {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+#rename-modal-cancel {
+  background: #111827;
+  color: #e5e7eb;
+}
+
+#rename-modal-save {
+  background: #3b82f6;
+  color: #f9fafb;
+}
+
+
+/* Beacon sidebar formatting */
+.beacon-info-block {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.beacon-name {
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.beacon-distance {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-left: 4px;
+}
+
+.beacon-id {
+  font-size: 0.68rem;
+  color: #6b7280;
+}
+
+
+.notification-item span.type-offline {
+  color: #ef4444;
+}
+
+.notification-item span.type-online {
+  color: #22c55e;
+}
+
+.notification-item span.type-alert {
+  color: #eab308;
+}
+
+/* Toast variants for smart alerts */
+.toast-offline {
+  border-left: 3px solid #ef4444;
+}
+
+.toast-online {
+  border-left: 3px solid #22c55e;
+}
+
+.toast-alert {
+  border-left: 3px solid #eab308;
+}
