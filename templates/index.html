@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>BLE Proximity Map</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <!-- Menu overlay + drawer -->
+  <div id="menu-overlay" class="hidden"></div>
+  <div id="menu-panel" class="hidden">
+    <div class="menu-header">
+      <span class="menu-title">Menu</span>
+      <button id="menu-close" class="menu-close">&times;</button>
+    </div>
+    <button class="menu-item" id="menu-download-latest">⬇ Download latest report</button>
+    <button class="menu-item" id="menu-reports-history">📄 View reports history</button>
+    <button class="menu-item" id="menu-notif-history">🕒 Notifications history</button>
+    <button class="menu-item" id="menu-activity-reports">📊 Beacon activity reports</button>
+    <button class="menu-item" id="menu-uptime">🩺 System uptime / health</button>
+    <button class="menu-item" id="menu-analytics">📈 Analytics dashboard</button>
+  </div>
+
+  <div id="app-container">
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <button id="menu-button" class="header-menu-btn">☰</button>
+        <div class="header-title-block">
+          <h1>BLE Proximity Map</h1>
+        </div>
+        <button id="notif-button" class="header-icon-btn">
+          <span class="icon">🔔</span>
+          <span id="notifications-badge" class="notif-badge"></span>
+        </button>
+      </div>
+
+      <div id="summary">
+        <div>Devices: <span id="summary-devices">0</span></div>
+        <div>Beacons: <span id="summary-beacons">0</span></div>
+      </div>
+
+      <div class="panel">
+        <div id="device-list"></div>
+      </div>
+
+    </div>
+
+    <div id="map"></div>
+  </div>
+
+  <!-- Slide-out notifications panel (optional UI shell) -->
+  <div id="notifications-panel" class="hidden">
+    <div class="notif-header">
+      <span>Notifications</span>
+      <button id="notif-close">&times;</button>
+    </div>
+    <div id="notifications-list"></div>
+    <button id="notif-clear" class="notif-clear-btn">Clear all</button>
+  </div>
+
+  <!-- Daily reports side panel (optional UI shell) -->
+  <div id="reports-panel" class="hidden">
+    <div class="notif-header">
+      <span>Daily Reports</span>
+      <button id="reports-close">&times;</button>
+    </div>
+    <div id="reports-list"></div>
+    <button id="reports-clear" class="notif-clear-btn">Clear reports</button>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toast-container"></div>
+
+  <!-- Rename popup modal -->
+  <div id="rename-backdrop" class="rename-backdrop hidden"></div>
+  <div id="rename-modal" class="rename-modal hidden">
+    <div class="rename-modal-inner">
+      <h3 id="rename-modal-title">Rename</h3>
+      <input
+        id="rename-modal-input"
+        type="text"
+        placeholder="Enter new name"
+        autocomplete="off"
+      />
+      <div class="rename-modal-actions">
+        <button id="rename-modal-cancel">Cancel</button>
+        <button id="rename-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>
