@@ -1,58 +1,39 @@
-from __future__ import annotations
-
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-
-from database import DB_MODE, get_db
+from database import get_db
+import time
 
 
-def _utc_iso() -> str:
-    # Keep a simple ISO string so it renders nicely on the UI and PDFs.
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def save_notification(msg: Dict[str, Any]) -> None:
-    """Persist a notification event.
-
-    Expected keys (best-effort):
-      - type
-      - name / beacon_name
-      - beacon_id
-      - device_ident
-      - time / event_time
-      - distance
+def save_notification(
+    ntype,
+    beacon_name,
+    event_time,
+    device_ident=None,
+    distance=None,
+):
     """
-    if not msg:
+    Persist a notification safely for both SQLite and Postgres.
+    """
+
+    if not ntype or not beacon_name:
         return
 
-    n_type = msg.get("type")
-    beacon_name = msg.get("name") or msg.get("beacon_name")
-    beacon_id = msg.get("beacon_id") or msg.get("beaconId")
-    device_ident = msg.get("device_ident") or msg.get("device")
-    event_time = msg.get("time") or msg.get("event_time")
-    distance = msg.get("distance")
-    created_at = _utc_iso()
-
     conn = get_db()
-    cur = conn.cursor()
-
-    if DB_MODE == "postgres":
-        # Dedupe is enforced by a unique index created in init_db().
-        cur.execute(
-            """
-            INSERT INTO notifications (type, beacon_name, beacon_id, device_ident, event_time, distance, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
+    try:
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        conn.execute(
+            f"""
+            INSERT INTO notifications
+            (type, beacon_name, event_time, created_at, device_ident, distance)
+            VALUES ({ph},{ph},{ph},{ph},{ph},{ph})
             """,
-            (n_type, beacon_name, beacon_id, device_ident, event_time, distance, created_at),
+            (
+                ntype,
+                beacon_name,
+                event_time,
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+                device_ident,
+                distance,
+            ),
         )
         conn.commit()
-    else:
-        cur.execute(
-            """
-            INSERT OR IGNORE INTO notifications (type, beacon_name, beacon_id, device_ident, event_time, distance, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (n_type, beacon_name, beacon_id, device_ident, event_time, distance, created_at),
-        )
-        conn.commit()
+    finally:
+        conn.close()
