@@ -8,6 +8,7 @@ from database import init_db, get_db
 from routes import map_bp, flespi_bp
 from services.beacon_logic import format_samoa_time
 from services.reporting_service import start_daily_thread, generate_daily_report, generate_activity_report
+from services.evaluator_service import start_evaluator_thread
 
 app = Flask(__name__)
 
@@ -22,6 +23,9 @@ os.makedirs(os.path.abspath(os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports"
 if os.getenv("DISABLE_DAILY_THREAD", "0") != "1":
     start_daily_thread()
 
+if os.getenv("DISABLE_EVALUATOR_THREAD", "0") != "1":
+    start_evaluator_thread()
+
 
 def samoa_iso_now():
     return format_samoa_time(time.time()).replace(" ", "T")
@@ -33,6 +37,7 @@ def save_notification():
     ntype = (data.get("type") or "").strip()
     name = (data.get("name") or "").strip()
     event_time = (data.get("time") or "").strip()
+    beacon_id = (data.get("beacon_id") or data.get("beacon") or "").strip() or None
     device_ident = (data.get("device") or "").strip() or None
     distance = data.get("distance")
 
@@ -41,8 +46,10 @@ def save_notification():
 
     conn = get_db()
     try:
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
         conn.execute(
-            "INSERT INTO notifications (type, beacon_name, beacon_id, event_time, created_at, device_ident, distance) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            f"INSERT INTO notifications (type, beacon_name, beacon_id, event_time, created_at, device_ident, distance) "
+            f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph})",
             (ntype, name, beacon_id, event_time, samoa_iso_now(), device_ident, distance),
         )
         conn.commit()

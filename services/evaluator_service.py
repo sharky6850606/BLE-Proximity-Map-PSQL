@@ -89,10 +89,9 @@ def run_once():
             emit_notification(
                 "missing",
                 beacon_id,
-                event_time,
-                distance=None,
-                beacon_id=beacon_id,
+                event_time=event_time,
                 device_ident=device_ident,
+                distance=None,
             )
             cur.execute(
                 f"UPDATE beacon_states SET missing=1, last_missing_ts={ph}, last_status_ts={ph} WHERE beacon_key={ph}",
@@ -104,10 +103,9 @@ def run_once():
             emit_notification(
                 "found",
                 beacon_id,
-                event_time,
-                distance=None,
-                beacon_id=beacon_id,
+                event_time=event_time,
                 device_ident=device_ident,
+                distance=None,
             )
             cur.execute(
                 f"UPDATE beacon_states SET missing=0, last_missing_ts={ph}, last_status_ts={ph} WHERE beacon_key={ph}",
@@ -139,10 +137,9 @@ def run_once():
             emit_notification(
                 notif_type,
                 beacon_id,
-                event_time,
-                distance=dist,
-                beacon_id=beacon_id,
+                event_time=event_time,
                 device_ident=device_ident,
+                distance=dist,
             )
             cur.execute(
                 f"UPDATE beacon_states SET state={ph}, last_change_ts={ph}, last_status_ts={ph}, active=1 WHERE beacon_key={ph}",
@@ -157,10 +154,9 @@ def run_once():
             emit_notification(
                 notif_type,
                 beacon_id,
-                event_time,
-                distance=dist,
-                beacon_id=beacon_id,
+                event_time=event_time,
                 device_ident=device_ident,
+                distance=dist,
             )
             cur.execute(
                 f"UPDATE beacon_states SET last_status_ts={ph}, active=1 WHERE beacon_key={ph}",
