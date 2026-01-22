@@ -3,21 +3,27 @@ from database import get_db
 from services.beacon_logic import format_samoa_time
 
 
-def emit_notification(ntype, beacon_id, device_id=None, distance=None):
+def _db_ph(conn):
+    return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+
+
+def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, distance=None):
     conn = get_db()
     try:
+        event_time = event_time or format_samoa_time(time.time())
+        ph = _db_ph(conn)
         conn.execute(
-            """
-            INSERT INTO notifications
-            (type, beacon_name, event_time, created_at, device_ident, distance)
-            VALUES (%s,%s,%s,%s,%s,%s)
+            f"""
+            (type, beacon_name, beacon_id, event_time, created_at, device_ident, distance)
+            VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph})
             """,
             (
                 ntype,
                 beacon_id,
+                beacon_id,
+                event_time,
                 format_samoa_time(time.time()),
-                format_samoa_time(time.time()),
-                device_id,
+                device_ident,
                 distance,
             ),
         )
