@@ -2,9 +2,13 @@ import os
 import json
 import time
 import threading
+from datetime import datetime
 
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleShe
 
 from database import get_db
 from services.beacon_logic import latest_messages, format_samoa_time
@@ -116,76 +120,88 @@ def _write_daily_pdf(pdf_path, created_at, entries):
     c.save()
 
 
-def generate_activity_report(device_id: str | None, beacon_id: str | None, start_date: str, end_date: str, out_path: str):
+def _db_ph(conn):
+    return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+
+
+def _fetch_notifications(conn, where_clause: str, params: tuple):
+    query = (
+        "SELECT type, beacon_name, beacon_id, event_time, distance, device_ident "
+        "FROM notifications "
+        + where_clause
+        + " ORDER BY id ASC"
+    )
+    return conn.execute(query, params).fetchall()
+
+
+def generate_activity_report(beacon_id: str, start_date: str | None = None, end_date: str | None = None):
     """Activity report.
-
-    - If beacon_id provided: show that beacon's events.
-    - If device_id provided (and no beacon_id): group by beacon_id and list each beacon's events as bullet sections.
+    Show the selected beacon's events for the date range.
     """
+    if not beacon_id:
+        return None
+
+    start_date = start_date or format_samoa_time(time.time())[:10]
+    end_date = end_date or start_date
+    start_ts = f"{start_date} 00:00:00"
+    end_ts = f"{end_date} 23:59:59"
+
     conn = get_db()
+    try:
+        ph = _db_ph(conn)
+        where = f"WHERE beacon_id = {ph} AND event_time >= {ph} AND event_time <= {ph}"
+        rows = _fetch_notifications(conn, where, (beacon_id, start_ts, end_ts))
+    finally:
+        conn.close()
 
-    # inclusive date range
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-    start_ts = start_dt.strftime("%Y-%m-%d 00:00")
-    end_ts = end_dt.strftime("%Y-%m-%d 23:59")
+    now = time.time()
+    created_at = format_samoa_time(now).replace(" ", "T")
+    safe_ts = format_samoa_time(now).replace(":", "-").replace(" ", "_")
+    out_dir = _ensure_dir(ACTIVITY_REPORTS_DIR)
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in beacon_id)
+    pdf_path = os.path.join(out_dir, f"activity_{safe_name}_{safe_ts}.pdf")
 
-    if beacon_id:
-        rows = fetch_notifications_for_beacon(conn, beacon_id, start_ts, end_ts)
-    elif device_id:
-        rows = fetch_notifications_for_device(conn, device_id, start_ts, end_ts)
-    else:
-        rows = []
-
-    doc = SimpleDocTemplate(out_path, pagesize=landscape(A4), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=landscape(A4),
+        rightMargin=24,
+        leftMargin=24,
+        topMargin=24,
+        bottomMargin=24,
+    )
+    
     styles = getSampleStyleSheet()
     story = []
 
-    title_parts = []
-    if device_id:
-        title_parts.append(f"Device {device_id}")
-    if beacon_id:
-        title_parts.append(f"Beacon {beacon_id}")
-    title = "Activity Report" + (" - " + ", ".join(title_parts) if title_parts else "")
-
-    story.append(Paragraph(title, styles['Title']))
-    story.append(Paragraph(f"Range: {start_date} to {end_date}", styles['Normal']))
+    story.append(Paragraph(f"Activity Report - Beacon {beacon_id}", styles["Title"]))
+    story.append(Paragraph(f"Range: {start_date} to {end_date}", styles["Normal"]))
     story.append(Spacer(1, 12))
 
     if not rows:
-        story.append(Paragraph("No events for this selection and date range.", styles['Normal']))
+        story.append(Paragraph("No events for this selection and date range.", styles["Normal"]))
         doc.build(story)
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return
-
-    # Normalize rows: (type, beacon_name, beacon_id, event_time, distance, device_ident)
-    if beacon_id:
-        data = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
-        story.extend(_build_events_table(story, styles, data))
     else:
-        # group by beacon_id (fallback to beacon_name)
-        by_beacon = {}
-        for r in rows:
-            b_id = r[2] or r[1]
-            by_beacon.setdefault(b_id, []).append(r)
+        data = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
+        story.extend(_build_events_table(styles, data))
+        doc.build(story)
 
-        for b_id in sorted(by_beacon.keys()):
-            story.append(Paragraph(f"• Beacon: {b_id}", styles['Heading3']))
-            data = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in by_beacon[b_id]]
-            story.extend(_build_events_table(story, styles, data, compact=True))
-            story.append(Spacer(1, 10))
-
-    doc.build(story)
+    summary = f"{len(rows)} events"
+    conn = get_db()
+    
     try:
+        ph = _db_ph(conn)
+        conn.execute(
+            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES ({ph},{ph},{ph},{ph})",
+            (beacon_id, created_at, summary, pdf_path),
+        )
+        conn.commit()
+    finally:
         conn.close()
-    except Exception:
-        pass
+
+return pdf_path
 
 
-def _build_events_table(story, styles, rows, compact: bool=False):
+def _build_events_table(styles, rows, compact: bool = False):
     """Return list of flowables for an events table."""
     header = ["Time", "Type", "Distance", "Device"]
     table_data = [header]
@@ -205,83 +221,7 @@ def _build_events_table(story, styles, rows, compact: bool=False):
     ]))
 
     return [t]
-
-    if not rows:
-        return None
-
-    now = time.time()
-    created_at = format_samoa_time(now).replace(" ", "T")
-    safe_ts = format_samoa_time(now).replace(":", "-").replace(" ", "_")
-    out_dir = _ensure_dir(ACTIVITY_REPORTS_DIR)
-
-    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in beacon_key)
-    pdf_path = os.path.join(out_dir, f"activity_{safe_name}_{safe_ts}.pdf")
-
-    _write_activity_pdf(pdf_path, created_at, beacon_key, rows)
-
-    summary = f"{len(rows)} events"
-    conn = get_db()
-    try:
-        conn.execute(
-            "INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES (%s,%s,%s,%s)",
-            (beacon_key, created_at, summary, pdf_path),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return pdf_path
-
-
-def _write_activity_pdf(pdf_path, created_at, beacon_key, rows):
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    w, h = A4
-    margin = 50
-    y = h - margin
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, y, "Beacon Activity Report")
-    y -= 20
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin, y, f"Beacon: {beacon_key}")
-    y -= 12
-    c.setFont("Helvetica", 9)
-    c.drawString(margin, y, f"Generated at: {created_at.replace('T',' ')} (Samoa time)")
-    y -= 12
-    c.line(margin, y, w - margin, y)
-    y -= 16
-
-    c.setFont("Helvetica-Bold", 10)
-    headers = ["Type", "Event time", "Distance (m)", "Recorded at"]
-    colx = [margin, margin + 80, margin + 250, margin + 360]
-    for x, hdr in zip(colx, headers):
-        c.drawString(x, y, hdr)
-    y -= 12
-    c.line(margin, y, w - margin, y)
-    y -= 10
-
-    c.setFont("Helvetica", 9)
-    for typ, event_time, created_at2, distance, _dev in rows:
-        if y < 60:
-            c.showPage()
-            y = h - margin
-            c.setFont("Helvetica-Bold", 10)
-            for x, hdr in zip(colx, headers):
-                c.drawString(x, y, hdr)
-            y -= 12
-            c.line(margin, y, w - margin, y)
-            y -= 10
-            c.setFont("Helvetica", 9)
-
-        c.drawString(colx[0], y, str(typ or "").upper())
-        c.drawString(colx[1], y, str(event_time or "").replace("T", " "))
-        c.drawString(colx[2], y, f"{distance:.2f}" if distance is not None else "-")
-        c.drawString(colx[3], y, str(created_at2 or "").replace("T", " "))
-        y -= 12
-
-    c.save()
-
-
+    
 def _daily_loop():
     while True:
         try:
