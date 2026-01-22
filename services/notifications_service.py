@@ -14,6 +14,7 @@ def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, dist
         ph = _db_ph(conn)
         conn.execute(
             f"""
+            INSERT INTO notifications
             (type, beacon_name, beacon_id, event_time, created_at, device_ident, distance)
             VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph})
             """,
