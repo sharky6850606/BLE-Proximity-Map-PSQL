@@ -4,6 +4,11 @@ from psycopg.rows import tuple_row
 
 from config import DATABASE_URL, DB_PATH
 
+
+class SQLiteConnection(sqlite3.Connection):
+    """SQLite connection subclass that allows custom attributes."""
+    pass
+
 POSTGRES_MIGRATIONS = [
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS device_ident TEXT",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS beacon_id TEXT",
@@ -28,7 +33,7 @@ def get_db():
         conn.backend = "postgres"
         return conn
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, factory=SQLiteConnection)
     conn.row_factory = sqlite3.Row
     conn.backend = "sqlite"
     return conn

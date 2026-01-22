@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for, abort
 import json
 
@@ -230,31 +231,54 @@ def analytics_page():
     def _ph(conn):
         return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
 
+    def _parse_time(ts_raw):
+        if not ts_raw:
+            return None
+        ts = str(ts_raw).replace("T", " ").replace(" UTC", "")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(ts, fmt)
+            except Exception:
+                continue
+        return None
+
     payload = {
         "window_hours": 24,
         "selected_beacon": "",
         "uptime_labels": [],
         "device_counts": [],
         "beacon_counts": [],
-        "hourly_labels": [],
-        "hourly_counts": [],
-        "beacon_labels": [],
-        "beacon_totals": [],
-        "beacon_ins": [],
-        "beacon_lefts": [],
+        "event_labels": [],
+        "event_in": [],
+        "event_left": [],
+        "event_still_in": [],
+        "event_still_out": [],
+        "status_labels": [],
+        "status_counts": [],
         "total_events": 0,
-        "most_active_beacon": "",
         "latest_timestamp": "",
         "latest_status": "",
         "latest_devices": 0,
         "latest_beacons": 0,
         "uptime_ok_percent": 0,
         "presence_by_beacon_json": "{}",
+        "presence_summary": [],
+        "status_breakdown": [],
+        "top_beacons": [],
+        "total_beacons": 0,
+        "beacons_in": 0,
+        "beacons_out": 0,
+        "beacons_missing": 0,
+        "beacons_unknown": 0,
+        "devices_online": 0,
+        "devices_total": 0,
     }
 
     conn = get_db()
     try:
         ph = _ph(conn)
+        now_ts = time.time()
+        window_start = format_samoa_time(now_ts - (payload["window_hours"] * 3600))
 
         # -------- UPTIME LOGS --------
         try:
@@ -285,58 +309,226 @@ def analytics_page():
             payload["latest_status"] = str(last[3] if not isinstance(last, dict) else last.get("status") or "OK")
             payload["uptime_ok_percent"] = int((ok / len(rows)) * 100) if rows else 0
 
-        # -------- NOTIFICATIONS COUNTS --------
+        # -------- DEVICE / BEACON LIVE COUNTS --------
         try:
-            rows = conn.execute(
-                "SELECT beacon_name, type, COUNT(*) FROM notifications "
-                "WHERE type IN ('in','left') GROUP BY beacon_name, type"
-            ).fetchall()
+            payload["devices_online"] = int(conn.execute(
+                f"SELECT COUNT(*) FROM device_states WHERE online = {ph}",
+                (1,),
+            ).fetchone()[0])
+            payload["devices_total"] = int(conn.execute(
+                "SELECT COUNT(*) FROM device_states",
+            ).fetchone()[0])
         except Exception:
-            rows = []
+            payload["devices_online"] = 0
+            payload["devices_total"] = 0
 
-        by_beacon = {}
-        for beacon, typ, cnt in rows:
-            b = beacon or "Unknown"
-            t = (typ or "").lower()
-            by_beacon.setdefault(b, {"in": 0, "left": 0})
-            if t in ("in", "left"):
-                by_beacon[b][t] += int(cnt or 0)
-
-        payload["total_events"] = sum(v["in"] + v["left"] for v in by_beacon.values())
-
-        items = sorted(
-            by_beacon.items(),
-            key=lambda kv: kv[1]["in"] + kv[1]["left"],
-            reverse=True,
-        )[:25]
-
-        payload["beacon_labels"] = [k for k, _ in items]
-        payload["beacon_ins"] = [v["in"] for _, v in items]
-        payload["beacon_lefts"] = [v["left"] for _, v in items]
-        payload["beacon_totals"] = [v["in"] + v["left"] for _, v in items]
-        if items:
-            payload["most_active_beacon"] = items[0][0]
-        payload["presence_by_beacon_json"] = json.dumps(by_beacon)
-
-        # -------- HOURLY TREND (last 24h by created_at) --------
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
-                hrows = conn.execute(
-                    "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, COUNT(*) "
-                    "FROM notifications WHERE created_at::timestamp >= NOW() - INTERVAL '24 hours' "
-                    "AND type IN ('in','left') GROUP BY hr ORDER BY hr"
+                srows = conn.execute(
+                    "SELECT state, missing, COUNT(*) FROM beacon_states GROUP BY state, missing"
                 ).fetchall()
             else:
-                hrows = conn.execute(
-                    "SELECT substr(created_at, 1, 13) || ':00' AS hr, COUNT(*) "
-                    "FROM notifications WHERE type IN ('in','left') GROUP BY hr ORDER BY hr"
+                srows = conn.execute(
+                    "SELECT state, missing, COUNT(*) FROM beacon_states GROUP BY state, missing"
                 ).fetchall()
         except Exception:
-            hrows = []
+            srows = []
 
-        for hr, cnt in hrows:
-            payload["hourly_labels"].append(str(hr))
-            payload["hourly_counts"].append(int(cnt or 0))
+        for state, missing, cnt in srows:
+            payload["total_beacons"] += int(cnt or 0)
+            if missing:
+                payload["beacons_missing"] += int(cnt or 0)
+                continue
+            if state == "in":
+                payload["beacons_in"] += int(cnt or 0)
+            elif state == "out":
+                payload["beacons_out"] += int(cnt or 0)
+            else:
+                payload["beacons_unknown"] += int(cnt or 0)
+
+        status_labels = ["In range", "Out of range", "Missing", "Unknown"]
+        status_counts = [
+            payload["beacons_in"],
+            payload["beacons_out"],
+            payload["beacons_missing"],
+            payload["beacons_unknown"],
+        ]
+        payload["status_labels"] = status_labels
+        payload["status_counts"] = status_counts
+
+        # -------- EVENT VOLUME (last window) --------
+        event_types = ("in", "left", "still_in", "still_out")
+        events_by_hour = {}
+        try:
+            if getattr(conn, "backend", "postgres") == "postgres":
+                erows = conn.execute(
+                    "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, type, COUNT(*) "
+                    "FROM notifications WHERE created_at::timestamp >= %s "
+                    "AND type IN ('in','left','still_in','still_out') "
+                    "GROUP BY hr, type ORDER BY hr",
+                    (window_start,),
+                ).fetchall()
+            else:
+                erows = conn.execute(
+                    "SELECT substr(created_at, 1, 13) || ':00' AS hr, type, COUNT(*) "
+                    "FROM notifications WHERE created_at >= ? "
+                    "AND type IN ('in','left','still_in','still_out') "
+                    "GROUP BY hr, type ORDER BY hr",
+                    (window_start,),
+                ).fetchall()
+        except Exception:
+            erows = []
+
+        for hr, typ, cnt in erows:
+            events_by_hour.setdefault(str(hr), {t: 0 for t in event_types})
+            events_by_hour[str(hr)][str(typ)] = int(cnt or 0)
+
+        labels = sorted(events_by_hour.keys())
+        payload["event_labels"] = labels
+        payload["event_in"] = [events_by_hour[l]["in"] for l in labels]
+        payload["event_left"] = [events_by_hour[l]["left"] for l in labels]
+        payload["event_still_in"] = [events_by_hour[l]["still_in"] for l in labels]
+        payload["event_still_out"] = [events_by_hour[l]["still_out"] for l in labels]
+
+        # -------- TOP BEACONS --------
+        try:
+            if getattr(conn, "backend", "postgres") == "postgres":
+                trows = conn.execute(
+                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, COUNT(*) "
+                    "FROM notifications WHERE created_at::timestamp >= %s "
+                    "AND type IN ('in','left','still_in','still_out') "
+                    "GROUP BY name, type",
+                    (window_start,),
+                ).fetchall()
+            else:
+                trows = conn.execute(
+                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, COUNT(*) "
+                    "FROM notifications WHERE created_at >= ? "
+                    "AND type IN ('in','left','still_in','still_out') "
+                    "GROUP BY name, type",
+                    (window_start,),
+                ).fetchall()
+        except Exception:
+            trows = []
+
+        by_beacon = {}
+        for name, typ, cnt in trows:
+            key = name or "Unknown"
+            entry = by_beacon.setdefault(key, {"in": 0, "left": 0, "still_in": 0, "still_out": 0})
+            entry[str(typ)] = int(cnt or 0)
+
+        top_items = sorted(
+            by_beacon.items(),
+            key=lambda kv: kv[1]["in"] + kv[1]["left"] + kv[1]["still_in"] + kv[1]["still_out"],
+            reverse=True,
+        )[:12]
+        payload["top_beacons"] = [
+            {
+                "name": name,
+                "in": data["in"],
+                "left": data["left"],
+                "still_in": data["still_in"],
+                "still_out": data["still_out"],
+                "total": data["in"] + data["left"] + data["still_in"] + data["still_out"],
+            }
+            for name, data in top_items
+        ]
+
+        payload["total_events"] = sum(
+            d["in"] + d["left"] + d["still_in"] + d["still_out"] for d in by_beacon.values()
+        )
+
+        # -------- STATUS BREAKDOWN (uptime) --------
+        status_counts = {}
+        for r in rows:
+            st = (r[3] if not isinstance(r, dict) else r.get("status")) or "OK"
+            status_counts[st] = status_counts.get(st, 0) + 1
+        total_status = sum(status_counts.values()) or 1
+        payload["status_breakdown"] = [
+            {
+                "status": k,
+                "count": v,
+                "percent": int((v / total_status) * 100),
+            }
+            for k, v in sorted(status_counts.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+
+        # -------- PRESENCE SUMMARY --------
+        presence = {}
+        try:
+            if getattr(conn, "backend", "postgres") == "postgres":
+                prow = conn.execute(
+                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, event_time "
+                    "FROM notifications WHERE created_at::timestamp >= %s "
+                    "AND type IN ('in','left','still_in','still_out') ORDER BY event_time",
+                    (window_start,),
+                ).fetchall()
+            else:
+                prow = conn.execute(
+                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, event_time "
+                    "FROM notifications WHERE created_at >= ? "
+                    "AND type IN ('in','left','still_in','still_out') ORDER BY event_time",
+                    (window_start,),
+                ).fetchall()
+        except Exception:
+            prow = []
+
+        window_start_dt = _parse_time(window_start)
+        window_end_dt = _parse_time(format_samoa_time(now_ts))
+
+        for name, typ, event_time in prow:
+            tstamp = _parse_time(event_time)
+            if not tstamp:
+                continue
+            bucket = presence.setdefault(name or "Unknown", {"events": []})
+            bucket["events"].append((tstamp, str(typ)))
+
+        presence_summary = []
+        presence_by_beacon = {}
+        for name, bucket in presence.items():
+            events = sorted(bucket["events"], key=lambda e: e[0])
+            last_state = None
+            last_time = window_start_dt
+            in_seconds = 0
+            out_seconds = 0
+            for ts, typ in events:
+                state = "in" if typ in ("in", "still_in") else "out"
+                if last_state and last_time:
+                    delta = (ts - last_time).total_seconds()
+                    if last_state == "in":
+                        in_seconds += max(delta, 0)
+                    else:
+                        out_seconds += max(delta, 0)
+                last_state = state
+                last_time = ts
+
+            if last_state and last_time and window_end_dt:
+                delta = (window_end_dt - last_time).total_seconds()
+                if last_state == "in":
+                    in_seconds += max(delta, 0)
+                else:
+                    out_seconds += max(delta, 0)
+
+            total = in_seconds + out_seconds
+            in_percent = int((in_seconds / total) * 100) if total else 0
+            out_percent = 100 - in_percent if total else 0
+
+            item = {
+                "name": name,
+                "in_percent": in_percent,
+                "out_percent": out_percent,
+                "in_hours": f"{in_seconds / 3600:.1f}" if total else "0.0",
+                "out_hours": f"{out_seconds / 3600:.1f}" if total else "0.0",
+                "event_count": len(events),
+                "last_state": last_state,
+                "last_event_time": events[-1][0].strftime("%Y-%m-%d %H:%M:%S") if events else "",
+            }
+            presence_summary.append(item)
+            presence_by_beacon[name] = item
+
+        presence_summary.sort(key=lambda i: i["event_count"], reverse=True)
+        payload["presence_summary"] = presence_summary
+        payload["presence_by_beacon_json"] = json.dumps(presence_by_beacon)
 
     finally:
         try:
