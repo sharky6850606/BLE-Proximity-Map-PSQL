@@ -8,7 +8,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleShe
+from reportlab.lib.styles import getSampleStyleSheet
 
 from database import get_db
 from services.beacon_logic import latest_messages, format_samoa_time
@@ -136,7 +136,8 @@ def _fetch_notifications(conn, where_clause: str, params: tuple):
 
 def generate_activity_report(beacon_id: str, start_date: str | None = None, end_date: str | None = None):
     """Activity report.
-    Show the selected beacon's events for the date range.
+
+    - Show the selected beacon's events for the date range.
     """
     if not beacon_id:
         return None
@@ -169,7 +170,6 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
         topMargin=24,
         bottomMargin=24,
     )
-    
     styles = getSampleStyleSheet()
     story = []
 
@@ -187,7 +187,6 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
 
     summary = f"{len(rows)} events"
     conn = get_db()
-    
     try:
         ph = _db_ph(conn)
         conn.execute(
@@ -198,7 +197,7 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     finally:
         conn.close()
 
-return pdf_path
+    return pdf_path
 
 
 def _build_events_table(styles, rows, compact: bool = False):
@@ -221,7 +220,8 @@ def _build_events_table(styles, rows, compact: bool = False):
     ]))
 
     return [t]
-    
+
+
 def _daily_loop():
     while True:
         try:
