@@ -4,6 +4,18 @@ from psycopg.rows import tuple_row
 
 from config import DATABASE_URL, DB_PATH
 
+POSTGRES_MIGRATIONS = [
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS device_ident TEXT",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS beacon_id TEXT",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_distance DOUBLE PRECISION",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS beacon_id TEXT",
+]
+
 
 def get_db():
     """Return a DB connection.
@@ -125,17 +137,7 @@ def init_db():
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS pdf_path TEXT")
 
             # Postgres-specific migrations for existing DBs (ignore errors if columns already exist)
-            for stmt in [
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS device_ident TEXT",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS beacon_id TEXT",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_distance DOUBLE PRECISION",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0",
-                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT",
-                "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS beacon_id TEXT",
-            ]:
+            for stmt in POSTGRES_MIGRATIONS:
                 cur.execute(stmt)
 
             conn.commit()
