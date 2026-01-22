@@ -89,7 +89,8 @@ def init_db():
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0")
-
+            cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT")
+            
             # uptime logs
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS uptime_logs (
@@ -123,20 +124,18 @@ def init_db():
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS summary TEXT")
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS pdf_path TEXT")
 
-            # migrations for existing sqlite DBs (ignore errors if columns already exist)
-        for stmt in [
-            "ALTER TABLE beacon_states ADD COLUMN device_ident TEXT",
-            "ALTER TABLE beacon_states ADD COLUMN beacon_id TEXT",
-            "ALTER TABLE beacon_states ADD COLUMN last_seen_ts INTEGER",
-            "ALTER TABLE beacon_states ADD COLUMN last_distance REAL",
-            "ALTER TABLE beacon_states ADD COLUMN last_rssi REAL",
-            "ALTER TABLE beacon_states ADD COLUMN last_status_ts INTEGER",
-            "ALTER TABLE beacon_states ADD COLUMN missing INTEGER DEFAULT 0",
-        ]:
-            try:
+           for stmt in [
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS device_ident TEXT",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS beacon_id TEXT",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_distance DOUBLE PRECISION",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0",
+                "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT",
+                "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS beacon_id TEXT",
+            ]:
                 cur.execute(stmt)
-            except Exception:
-                pass
 
         conn.commit()
         print("[init_db] postgres schema ready ✅")
@@ -172,6 +171,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT,
                 beacon_name TEXT,
+                beacon_id TEXT,
                 event_time TEXT,
                 created_at TEXT,
                 device_ident TEXT,
@@ -183,7 +183,15 @@ def init_db():
                 beacon_key TEXT PRIMARY KEY,
                 state TEXT,
                 last_change_ts INTEGER,
-                active INTEGER DEFAULT 1
+                active INTEGER DEFAULT 1,
+                device_ident TEXT,
+                beacon_id TEXT,
+                last_seen_ts INTEGER,
+                last_distance REAL,
+                last_rssi REAL,
+                last_status_ts INTEGER,
+                missing INTEGER DEFAULT 0,
+                last_missing_ts INTEGER
             )
         """)
         cur.execute("""
@@ -214,22 +222,7 @@ def init_db():
             )
         """)
         
-        # sqlite migrations (add missing columns safely)
-        for stmt in [
-            "ALTER TABLE notifications ADD COLUMN beacon_id TEXT",
-            "ALTER TABLE beacon_states ADD COLUMN device_ident TEXT",
-            "ALTER TABLE beacon_states ADD COLUMN beacon_id TEXT",
-            "ALTER TABLE beacon_states ADD COLUMN last_seen_ts INTEGER",
-            "ALTER TABLE beacon_states ADD COLUMN last_distance REAL",
-            "ALTER TABLE beacon_states ADD COLUMN last_rssi REAL",
-            "ALTER TABLE beacon_states ADD COLUMN last_status_ts INTEGER",
-            "ALTER TABLE beacon_states ADD COLUMN missing INTEGER DEFAULT 0",
-        ]:
-            try:
-                cur.execute(stmt)
-            except Exception:
-                pass
-
+        
         conn.commit()
         print("[init_db] sqlite schema ready ✅")
     finally:
