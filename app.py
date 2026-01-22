@@ -25,7 +25,8 @@ if os.getenv("DISABLE_DAILY_THREAD", "0") != "1":
 
 if os.getenv("DISABLE_EVALUATOR_THREAD", "0") != "1":
     start_evaluator_thread()
-    
+
+
 def samoa_iso_now():
     return format_samoa_time(time.time()).replace(" ", "T")
 
