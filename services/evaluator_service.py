@@ -7,7 +7,7 @@ from services.notifications_service import emit_notification
 
 # Beacon behavior
 IN_RANGE_METERS = 3.0
-STILL_INTERVAL_SEC = 15 * 60       # still_in / still_out every 15 minutes
+STILL_INTERVAL_SEC = 30 * 60       # still_in / still_out every 30 minutes
 MISSING_AFTER_SEC = 30 * 60        # missing if not seen for 30 minutes
 
 
