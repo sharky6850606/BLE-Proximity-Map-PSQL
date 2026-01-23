@@ -51,6 +51,8 @@ def generate_daily_report():
             "last_device": last_device,
         })
 
+    entries.sort(key=lambda e: (e.get("status") != "Online", e.get("name") or "", e.get("id") or ""))
+
     now = time.time()
     created_at = format_samoa_time(now).replace(" ", "T")
     safe_ts = format_samoa_time(now).replace(":", "-").replace(" ", "_")
@@ -74,50 +76,37 @@ def generate_daily_report():
 
 
 def _write_daily_pdf(pdf_path, created_at, entries):
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    w, h = A4
-    margin = 50
-    y = h - margin
+    doc = SimpleDocTemplate(pdf_path, pagesize=A4, rightMargin=32, leftMargin=32, topMargin=32, bottomMargin=32)
+    styles = getSampleStyleSheet()
+    story = []
 
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, y, "Daily Beacon Report")
-    y -= 20
-    c.setFont("Helvetica", 10)
-    c.drawString(margin, y, f"Generated at: {created_at.replace('T',' ')} (Samoa time)")
-    y -= 12
-    c.line(margin, y, w - margin, y)
-    y -= 16
+    story.append(Paragraph("Daily Beacon Report", styles["Title"]))
+    story.append(Paragraph(f"Generated at: {created_at.replace('T',' ')} (Samoa time)", styles["Normal"]))
+    story.append(Spacer(1, 12))
 
-    c.setFont("Helvetica-Bold", 10)
-    headers = ["Beacon ID", "Name", "Status", "Last seen", "Last device"]
-    colx = [margin, margin + 130, margin + 270, margin + 350, margin + 470]
-    for x, hdr in zip(colx, headers):
-        c.drawString(x, y, hdr)
-    y -= 12
-    c.line(margin, y, w - margin, y)
-    y -= 10
-
-    c.setFont("Helvetica", 9)
+    table_data = [["Beacon ID", "Name", "Status", "Last seen", "Last device"]]
     for e in entries:
-        if y < 60:
-            c.showPage()
-            y = h - margin
-            c.setFont("Helvetica-Bold", 10)
-            for x, hdr in zip(colx, headers):
-                c.drawString(x, y, hdr)
-            y -= 12
-            c.line(margin, y, w - margin, y)
-            y -= 10
-            c.setFont("Helvetica", 9)
+        table_data.append([
+            str(e.get("id") or ""),
+            str(e.get("name") or ""),
+            str(e.get("status") or ""),
+            str(e.get("last_seen") or ""),
+            str(e.get("last_device") or ""),
+        ])
 
-        c.drawString(colx[0], y, str(e.get("id") or ""))
-        c.drawString(colx[1], y, str(e.get("name") or ""))
-        c.drawString(colx[2], y, str(e.get("status") or ""))
-        c.drawString(colx[3], y, str(e.get("last_seen") or ""))
-        c.drawString(colx[4], y, str(e.get("last_device") or ""))
-        y -= 12
+    table = Table(table_data, colWidths=[80, 140, 70, 150, 120])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
 
-    c.save()
+    story.append(table)
+    doc.build(story)
 
 
 def _db_ph(conn):
