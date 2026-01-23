@@ -18,6 +18,10 @@ def _extract_messages(payload):
     return None
 
 
+def _db_ph(conn):
+    return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+
+
 @flespi_bp.route("/flespi", methods=["POST"])
 def flespi_receiver():
     payload = request.get_json(silent=True)
@@ -28,6 +32,7 @@ def flespi_receiver():
     now_ts = int(time.time())
     processed = 0
     seen = set()
+    beacon_updates = []
 
     for raw in msgs:
         if not isinstance(raw, dict):
@@ -39,19 +44,45 @@ def flespi_receiver():
         latest_messages[ident] = snap
         seen.add(ident)
         processed += 1
+        for b in snap.get("beacons") or []:
+            bid = b.get("id")
+            if not bid:
+                continue
+            beacon_updates.append(
+                (
+                    f"{ident}:{bid}",
+                    ident,
+                    bid,
+                    now_ts,
+                    b.get("distance"),
+                    b.get("rssi"),
+                )
+            )
 
     # Persist online state best-effort
     conn = None
     try:
         conn = get_db()
+        ph = _db_ph(conn)
         for ident in seen:
             conn.execute(
-                "INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                f"INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph}) "
                 "ON CONFLICT(device_key) DO UPDATE SET "
                 "state=excluded.state, last_change_ts=excluded.last_change_ts, device_ident=excluded.device_ident, "
                 "online=excluded.online, last_seen_ts=excluded.last_seen_ts, last_online_ts=excluded.last_online_ts",
                 (ident, "online", now_ts, ident, 1, now_ts, now_ts),
+            )
+        for beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi in beacon_updates:
+            conn.execute(
+                f"INSERT INTO beacon_states "
+                f"(beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, active, missing) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},1,0) "
+                "ON CONFLICT(beacon_key) DO UPDATE SET "
+                "device_ident=excluded.device_ident, beacon_id=excluded.beacon_id, "
+                "last_seen_ts=excluded.last_seen_ts, last_distance=excluded.last_distance, "
+                "last_rssi=excluded.last_rssi, active=1",
+                (beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi),
             )
         conn.commit()
     except Exception as e:
