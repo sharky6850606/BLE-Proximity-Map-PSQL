@@ -55,12 +55,6 @@ async function fetchAndUpdateMapData() {
     currentBeaconNames = beaconNames;
     lastDevices = devices;
 
-    // Extract daily report if present
-    const dailyReport = devices.find(d => d && d.ident === 'DAILY_REPORT');
-    if (dailyReport && dailyReport.report) {
-      addDailyReport(dailyReport);
-    }
-
     // Build aggregated beacon list (across devices)
     const aggBeacons = aggregateBeacons(devices, beaconNames);
     // in/out detection + smart status alerts
@@ -199,6 +193,163 @@ function getDeviceColor(ident, fallback) {
   }
   deviceColors[ident] = '#3b82f6';
   return deviceColors[ident];
+}
+
+function clearMapLayers() {
+  Object.values(deviceMarkers).forEach(m => {
+    try { map.removeLayer(m); } catch (e) {}
+  });
+  Object.values(beaconCircles).forEach(c => {
+    try { map.removeLayer(c); } catch (e) {}
+  });
+  deviceMarkers = {};
+  beaconCircles = {};
+  if (heatLayer) {
+    map.removeLayer(heatLayer);
+    heatLayer = null;
+  }
+}
+
+function updateMap(devices, beaconsAgg) {
+  if (!map) return;
+  clearMapLayers();
+
+  // Filter devices if requested
+  const filteredDevices = currentDeviceFilter
+    ? devices.filter(d => d.ident === currentDeviceFilter)
+    : devices;
+
+  // Markers for devices
+  filteredDevices.forEach(d => {
+    if (!d || d.ident === 'DAILY_REPORT') return;
+    if (d.lat == null || d.lon == null) return;
+    const label = d.name || d.ident;
+    const color = getDeviceColor(d.ident, d.color);
+
+    const marker = L.marker([d.lat, d.lon], {
+      title: label,
+    }).addTo(map);
+
+    marker.bindPopup(`
+      <div style="min-width:180px;">
+        <strong>${label}</strong><br/>
+        ID: ${d.ident}<br/>
+        Last seen: ${d.timestamp}<br/>
+      </div>
+    `);
+
+    deviceMarkers[d.ident] = marker;
+  });
+
+  // Render beacon circles around device positions
+  beaconsAgg.forEach(b => {
+    if (b.lat == null || b.lon == null) return;
+    const dist = b.distance != null ? Number(b.distance) : 0;
+    const radius = Math.max(3, dist || 5);
+
+    const key = `${b.deviceIdent || 'unknown'}::${b.id}`;
+    const circle = L.circle([b.lat, b.lon], {
+      radius: radius,
+      color: b.deviceColor || '#3b82f6',
+      fillColor: b.deviceColor || '#3b82f6',
+      fillOpacity: 0.1,
+      weight: 2
+    }).addTo(map);
+
+    circle.bindPopup(`
+      <div style="min-width:200px;">
+        <strong>${b.name || b.id}</strong><br/>
+        ID: ${b.id}<br/>
+        Device: ${b.deviceName || b.deviceIdent}<br/>
+        Distance: ${dist.toFixed(2)} m<br/>
+        Last seen: ${b.last_seen || '-'}
+      </div>
+    `);
+
+    beaconCircles[key] = circle;
+  });
+}
+
+
+// ---- Sidebar ----
+
+function updateSidebar(devices, beaconNames) {
+  const container = document.getElementById('device-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  // sort devices by name/ident
+  const sortedDevices = devices
+    .filter(d => d && d.ident !== 'DAILY_REPORT')
+    .sort((a, b) => (a.name || a.ident).localeCompare(b.name || b.ident));
+
+  sortedDevices.forEach(d => {
+    const ident = d.ident;
+    const label = d.name || ident;
+    const deviceBlock = document.createElement('div');
+    deviceBlock.className = 'device-block';
+
+    const timeLabel = d.timestamp || '-';
+
+    deviceBlock.innerHTML = `
+      <div class="device-block-header">
+        <div class="device-name">
+          <span class="device-color" style="background:${d.color || '#3b82f6'}"></span>
+          ${label}
+        </div>
+        <div class="device-meta">${ident}</div>
+      </div>
+      <div class="device-sub">
+        <span>${timeLabel}</span>
+        <button class="rename-device-btn" data-device-id="${ident}" data-current-name="${label}">✎</button>
+      </div>
+    `;
+
+    const beaconList = document.createElement('div');
+    beaconList.className = 'beacon-list';
+
+    (d.beacons || []).forEach(b => {
+      const bid = b.id;
+      const bname = beaconNames[bid] || b.name || bid;
+      const dist = b.distance != null ? Number(b.distance).toFixed(2) : '-';
+      const row = document.createElement('div');
+      row.className = 'beacon-row';
+      row.innerHTML = `
+        <div class="beacon-main">
+          <span class="beacon-name">${bname}</span>
+          <span class="beacon-distance">${dist} m</span>
+        </div>
+        <div class="beacon-sub">
+          <span class="beacon-id">${bid}</span>
+          <button class="rename-beacon-btn" data-beacon-id="${bid}" data-current-name="${bname}">✎</button>
+        </div>
+      `;
+      beaconList.appendChild(row);
+    });
+
+    deviceBlock.appendChild(beaconList);
+
+    const header = deviceBlock.querySelector('.device-block-header');
+    if (header) {
+      header.addEventListener('click', () => {
+        setDeviceFilter(ident);
+      });
+    }
+
+    // Clicking a beacon row centers on that device + beacon
+    const beaconRows = deviceBlock.querySelectorAll('.beacon-row');
+    beaconRows.forEach(row => {
+      row.addEventListener('click', e => {
+        // ignore clicks that were for the pencil button
+        if (e.target.closest('.rename-beacon-btn')) return;
+        currentDeviceFilter = ident;
+        updateMap(lastDevices, lastBeaconsAgg);
+      });
+    });
+
+    container.appendChild(deviceBlock);
+  });
 }
 
 
