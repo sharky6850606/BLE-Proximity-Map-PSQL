@@ -31,4 +31,3 @@ def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, dist
         conn.commit()
     finally:
         conn.close()
-
