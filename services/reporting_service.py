@@ -330,3 +330,4 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
         conn.close()
 
     return pdf_path
+
