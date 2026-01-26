@@ -552,3 +552,188 @@ async function fetchRecentNotifications() {
     console.error('Failed to fetch recent notifications', e);
   }
 }
+
+// ---- Rename modal ----
+
+function openRenameModal(type, id, currentName) {
+  renameContext = { type, id };
+
+  const backdrop = document.getElementById('rename-backdrop');
+  const modal = document.getElementById('rename-modal');
+  const input = document.getElementById('rename-modal-input');
+  const title = document.getElementById('rename-modal-title');
+
+  if (!backdrop || !modal || !input || !title) return;
+
+  title.textContent = type === 'device' ? 'Rename device' : 'Rename beacon';
+  input.value = currentName || '';
+  modal.classList.remove('hidden');
+  backdrop.classList.remove('hidden');
+  input.focus();
+  input.select();
+}
+
+function closeRenameModal() {
+  const backdrop = document.getElementById('rename-backdrop');
+  const modal = document.getElementById('rename-modal');
+  if (backdrop) backdrop.classList.add('hidden');
+  if (modal) modal.classList.add('hidden');
+  renameContext = null;
+}
+
+async function saveRenameModal() {
+  if (!renameContext) return;
+  const input = document.getElementById('rename-modal-input');
+  const newName = (input?.value || '').trim();
+  if (!newName) {
+    closeRenameModal();
+    return;
+  }
+
+  try {
+    if (renameContext.type === 'device') {
+      await fetch('/rename_device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: renameContext.id,
+          new_name: newName
+        })
+      });
+    } else {
+      await fetch('/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          beacon_id: renameContext.id,
+          new_name: newName
+        })
+      });
+    }
+  } catch (e) {
+    console.error('Rename failed', e);
+  }
+
+  closeRenameModal();
+  // refresh to pick up new names
+  fetchAndUpdateMapData();
+fetchRecentNotifications();
+}
+
+function setupRenameModalHandlers() {
+  const backdrop = document.getElementById('rename-backdrop');
+  const cancelBtn = document.getElementById('rename-modal-cancel');
+  const saveBtn = document.getElementById('rename-modal-save');
+  const input = document.getElementById('rename-modal-input');
+
+  if (backdrop) {
+    backdrop.addEventListener('click', closeRenameModal);
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', closeRenameModal);
+  }
+  if (saveBtn) {
+    saveBtn.addEventListener('click', saveRenameModal);
+  }
+  if (input) {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveRenameModal();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeRenameModal();
+      }
+    });
+  }
+
+  // Pencil icon delegation
+  document.addEventListener('click', e => {
+    const devBtn = e.target.closest('.rename-device-btn');
+    if (devBtn) {
+      const id = devBtn.getAttribute('data-device-id');
+      const currentName = devBtn.getAttribute('data-current-name') || id;
+      openRenameModal('device', id, currentName);
+      return;
+    }
+
+    const beaconBtn = e.target.closest('.rename-beacon-btn');
+    if (beaconBtn) {
+      const id = beaconBtn.getAttribute('data-beacon-id');
+      const currentName = beaconBtn.getAttribute('data-current-name') || id;
+      openRenameModal('beacon', id, currentName);
+      return;
+    }
+  });
+}
+
+
+// ---- Menu drawer (existing) ----
+
+function setupMenu() {
+  const btn = document.getElementById('menu-button');
+  const panel = document.getElementById('menu-panel');
+  const overlay = document.getElementById('menu-overlay');
+  const closeBtn = document.getElementById('menu-close');
+
+  if (!btn || !panel || !overlay || !closeBtn) {
+    return;
+  }
+
+  function openMenu() {
+    panel.classList.remove('hidden');
+    panel.classList.add('open');
+    overlay.classList.remove('hidden');
+  }
+
+  function closeMenu() {
+    panel.classList.remove('open');
+    panel.classList.add('hidden');
+    overlay.classList.add('hidden');
+  }
+
+  btn.addEventListener('click', openMenu);
+  closeBtn.addEventListener('click', closeMenu);
+  overlay.addEventListener('click', closeMenu);
+  const downloadLatestBtn = document.getElementById('menu-download-latest');
+  const reportsHistoryBtn = document.getElementById('menu-reports-history');
+  const notifHistoryBtn = document.getElementById('menu-notif-history');
+  const activityReportsBtn = document.getElementById('menu-activity-reports');
+  const uptimeBtn = document.getElementById('menu-uptime');
+  const analyticsBtn = document.getElementById('menu-analytics');
+
+  function goTo(url) {
+    closeMenu();
+    window.location.href = url;
+  }
+
+  if (downloadLatestBtn) {
+    downloadLatestBtn.addEventListener('click', () => goTo('/download/latest-report'));
+  }
+  if (reportsHistoryBtn) {
+    reportsHistoryBtn.addEventListener('click', () => goTo('/reports/history'));
+  }
+  if (notifHistoryBtn) {
+    notifHistoryBtn.addEventListener('click', () => goTo('/notifications/history'));
+  }
+  if (activityReportsBtn) {
+    activityReportsBtn.addEventListener('click', () => goTo('/activity-reports'));
+  }
+  if (uptimeBtn) {
+    uptimeBtn.addEventListener('click', () => goTo('/uptime'));
+  }
+  if (analyticsBtn) {
+    analyticsBtn.addEventListener('click', () => goTo('/analytics'));
+  }
+
+}
+
+// ---- Init ----
+
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  setupMenu();
+  setupRenameModalHandlers();
+  setupNotificationsUI();
+  startPolling();
+});
