@@ -74,11 +74,20 @@ def recent_notifications():
     try:
         cur = conn.cursor()
         cur.execute(
-            """SELECT id, type, beacon_name, beacon_id, event_time, device_ident, distance, created_at
-               FROM notifications
-              WHERE id > %s
-              ORDER BY id ASC
-              LIMIT 200""",
+            """SELECT n.id,
+                      n.type,
+                      COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
+                      n.beacon_id,
+                      n.event_time,
+                      n.device_ident,
+                      n.distance,
+                      n.created_at
+                 FROM notifications n
+            LEFT JOIN beacon_names bn
+                   ON n.beacon_id = bn.id
+                WHERE n.id > %s
+                ORDER BY n.id ASC
+                LIMIT 200""",
             (since_id_int,),
         )
         rows = cur.fetchall()
@@ -95,6 +104,7 @@ def recent_notifications():
             "event_time": r[4],
             "device_ident": r[5],
             "distance": r[6],
+            "created_at": r[7],
         })
     return jsonify({"items": items})
 
@@ -124,7 +134,19 @@ def download_daily_report(report_id: int):
 def notifications_history():
     conn = get_db()
     try:
-        notifications = conn.execute("SELECT created_at, type, beacon_name, event_time, distance, device_ident FROM notifications ORDER BY id DESC LIMIT 500").fetchall()
+        notifications = conn.execute(
+            """SELECT n.created_at,
+                      n.type,
+                      COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
+                      n.event_time,
+                      n.distance,
+                      n.device_ident
+                 FROM notifications n
+            LEFT JOIN beacon_names bn
+                   ON n.beacon_id = bn.id
+                ORDER BY n.id DESC
+                LIMIT 500"""
+        ).fetchall()
     finally:
         conn.close()
     return render_template("notifications_history.html", notifications=notifications)
