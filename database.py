@@ -238,3 +238,4 @@ def init_db():
         except Exception:
             pass
         conn.close()
+
