@@ -1,4 +1,3 @@
-
 html, body {
     margin: 0;
     padding: 0;
@@ -313,6 +312,20 @@ html, body {
   justify-content: center;
 }
 
+.notif-badge {
+  background: #ef4444;
+  color: #f9fafb;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.notif-badge:empty {
+  display: none;
+}
 
 .beacon-top-row {
   display: flex;
@@ -639,6 +652,10 @@ html, body {
   color: #eab308;
 }
 
+.notification-item span.type-status {
+  color: #38bdf8;
+}
+
 /* Toast variants for smart alerts */
 .toast-offline {
   border-left: 3px solid #ef4444;
@@ -650,4 +667,8 @@ html, body {
 
 .toast-alert {
   border-left: 3px solid #eab308;
+}
+
+.toast-status {
+  border-left: 3px solid #38bdf8;
 }
