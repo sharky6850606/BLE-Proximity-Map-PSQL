@@ -73,6 +73,7 @@ def recent_notifications():
     conn = get_db()
     try:
         cur = conn.cursor()
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
         cur.execute(
             """SELECT n.id,
                       n.type,
@@ -85,9 +86,9 @@ def recent_notifications():
                  FROM notifications n
             LEFT JOIN beacon_names bn
                    ON n.beacon_id = bn.id
-                WHERE n.id > %s
+                WHERE n.id > {ph}
                 ORDER BY n.id ASC
-                LIMIT 200""",
+                LIMIT 200""".format(ph=ph),
             (since_id_int,),
         )
         rows = cur.fetchall()
