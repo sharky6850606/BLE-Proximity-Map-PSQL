@@ -4,7 +4,6 @@ import time
 import threading
 from datetime import datetime
 
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
@@ -26,6 +25,8 @@ def generate_daily_report():
     try:
         rows = conn.execute("SELECT id, name FROM beacon_names ORDER BY id").fetchall()
         beacon_list = [(r[0], r[1]) for r in rows]
+        device_rows = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
+        device_names = {r[0]: r[1] for r in device_rows}
     finally:
         conn.close()
 
@@ -41,7 +42,7 @@ def generate_daily_report():
                 if b.get("id") == bid:
                     status = "Online"
                     last_seen = b.get("last_seen") or ""
-                    last_device = dev_id
+                    last_device = device_names.get(dev_id) or dev_id
                     break
         entries.append({
             "id": bid,
@@ -84,17 +85,21 @@ def _write_daily_pdf(pdf_path, created_at, entries):
     story.append(Paragraph(f"Generated at: {created_at.replace('T',' ')} (Samoa time)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
-    table_data = [["Beacon ID", "Name", "Status", "Last seen", "Last device"]]
+    table_data = [[
+        Paragraph("Beacon", styles["BodyText"]),
+        Paragraph("Status", styles["BodyText"]),
+        Paragraph("Last seen", styles["BodyText"]),
+        Paragraph("Last device", styles["BodyText"]),
+    ]]
     for e in entries:
         table_data.append([
-            str(e.get("id") or ""),
-            str(e.get("name") or ""),
-            str(e.get("status") or ""),
-            str(e.get("last_seen") or ""),
-            str(e.get("last_device") or ""),
+            Paragraph(str(e.get("name") or e.get("id") or ""), styles["BodyText"]),
+            Paragraph(str(e.get("status") or ""), styles["BodyText"]),
+            Paragraph(str(e.get("last_seen") or ""), styles["BodyText"]),
+            Paragraph(str(e.get("last_device") or ""), styles["BodyText"]),
         ])
 
-    table = Table(table_data, colWidths=[80, 140, 70, 150, 120])
+    table = Table(table_data, colWidths=[160, 70, 160, 140], repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
@@ -103,6 +108,7 @@ def _write_daily_pdf(pdf_path, created_at, entries):
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
     ]))
 
     story.append(table)
@@ -115,8 +121,15 @@ def _db_ph(conn):
 
 def _fetch_notifications(conn, where_clause: str, params: tuple):
     query = (
-        "SELECT type, beacon_name, beacon_id, event_time, distance, device_ident "
-        "FROM notifications "
+        "SELECT n.type, "
+        "COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_name, "
+        "n.beacon_id, "
+        "n.event_time, "
+        "n.distance, "
+        "COALESCE(d.name, n.device_ident) AS device_name "
+        "FROM notifications n "
+        "LEFT JOIN beacon_names bn ON n.beacon_id = bn.id "
+        "LEFT JOIN devices d ON n.device_ident = d.id "
         + where_clause
         + " ORDER BY id ASC"
     )
@@ -144,6 +157,20 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     finally:
         conn.close()
 
+    beacon_display = None
+    if rows:
+        beacon_display = rows[0][1] or beacon_id
+    if beacon_display is None:
+        conn = get_db()
+        try:
+            ph = _db_ph(conn)
+            row = conn.execute(f"SELECT name FROM beacon_names WHERE id = {ph}", (beacon_id,)).fetchone()
+            if row:
+                beacon_display = row[0] or beacon_id
+        finally:
+            conn.close()
+    beacon_display = beacon_display or beacon_id
+
     now = time.time()
     created_at = format_samoa_time(now).replace(" ", "T")
     safe_ts = format_samoa_time(now).replace(":", "-").replace(" ", "_")
@@ -162,7 +189,7 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph(f"Activity Report - Beacon {beacon_id}", styles["Title"]))
+    story.append(Paragraph(f"Activity Report - Beacon {beacon_display}", styles["Title"]))
     story.append(Paragraph(f"Range: {start_date} to {end_date}", styles["Normal"]))
     story.append(Spacer(1, 12))
 
@@ -170,8 +197,15 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
         story.append(Paragraph("No events for this selection and date range.", styles["Normal"]))
         doc.build(story)
     else:
-        data = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
-        story.extend(_build_events_table(styles, data))
+        data = []
+        for ntype, bname, bid, event_time, dist, device_name in rows:
+            data.append([
+                _format_event_time(event_time),
+                (ntype or "").upper(),
+                "" if dist is None else f"{dist:.2f} m",
+                device_name or "",
+            ])
+        story.extend(_build_events_table(styles, ["Time", "Type", "Distance", "Device"], data, [130, 70, 90, 200]))
         doc.build(story)
 
     summary = f"{len(rows)} events"
@@ -180,7 +214,7 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
         ph = _db_ph(conn)
         conn.execute(
             f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES ({ph},{ph},{ph},{ph})",
-            (beacon_id, created_at, summary, pdf_path),
+            (beacon_display, created_at, summary, pdf_path),
         )
         conn.commit()
     finally:
@@ -189,26 +223,30 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     return pdf_path
 
 
-def _build_events_table(styles, rows, compact: bool = False):
+def _build_events_table(styles, headers, rows, col_widths):
     """Return list of flowables for an events table."""
-    header = ["Time", "Type", "Distance", "Device"]
-    table_data = [header]
+    table_data = [[Paragraph(h, styles["BodyText"]) for h in headers]]
+    for row in rows:
+        table_data.append([Paragraph(str(cell or ""), styles["BodyText"]) for cell in row])
 
-    for ntype, bname, bid, event_time, dist, device_ident in rows:
-        d = "" if dist is None else f"{dist}m"
-        table_data.append([str(event_time), str(ntype), d, str(device_ident or '')])
-
-    t = Table(table_data, hAlign='LEFT')
+    t = Table(table_data, colWidths=col_widths, hAlign='LEFT', repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8 if compact else 9),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
         ('VALIGN', (0,0), (-1,-1), 'TOP'),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.whitesmoke, colors.white]),
+        ('WORDWRAP', (0,0), (-1,-1), 'CJK'),
     ]))
 
     return [t]
+
+
+def _format_event_time(value):
+    if not value:
+        return ""
+    return str(value).replace("T", " ").replace(" UTC", "")
 
 
 def _daily_loop():
@@ -238,13 +276,24 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
 
     conn = get_db()
     try:
+        ph = _db_ph(conn)
+        params = [device_ident]
+        time_filters = ""
+        if start_date:
+            time_filters += f" AND n.event_time >= {ph}"
+            params.append(f"{start_date} 00:00:00")
+        if end_date:
+            time_filters += f" AND n.event_time <= {ph}"
+            params.append(f"{end_date} 23:59:59")
         rows = conn.execute(
-            "SELECT beacon_name, type, event_time, created_at, distance FROM notifications "
-            "WHERE device_ident = %s"
-            + (" AND event_time >= %s" if start_date else "")
-            + (" AND event_time <= %s" if end_date else "")
-            + " ORDER BY id ASC",
-            tuple([device_ident] + ([f"{start_date} 00:00:00"] if start_date else []) + ([f"{end_date} 23:59:59"] if end_date else [])),
+            "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_name, "
+            "n.type, n.event_time, n.created_at, n.distance "
+            "FROM notifications n "
+            "LEFT JOIN beacon_names bn ON n.beacon_id = bn.id "
+            f"WHERE n.device_ident = {ph}"
+            + time_filters
+            + " ORDER BY n.id ASC",
+            tuple(params),
         ).fetchall()
     finally:
         conn.close()
@@ -259,63 +308,55 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
     safe_dev = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in device_ident)
     pdf_path = os.path.join(out_dir, f"device_{safe_dev}_{safe_ts}.pdf")
 
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    w, h = A4
-    margin = 50
-    y = h - margin
+    device_display = device_ident
+    conn = get_db()
+    try:
+        ph = _db_ph(conn)
+        row = conn.execute(f"SELECT name FROM devices WHERE id = {ph}", (device_ident,)).fetchone()
+        if row and row[0]:
+            device_display = row[0]
+    finally:
+        conn.close()
 
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, y, "Device Activity Report")
-    y -= 20
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin, y, f"Device: {device_ident}")
-    y -= 12
-    c.setFont("Helvetica", 9)
-    c.drawString(margin, y, f"Generated at: {created_at.replace('T',' ')} (Samoa time)")
-    y -= 12
-
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=landscape(A4),
+        rightMargin=24,
+        leftMargin=24,
+        topMargin=24,
+        bottomMargin=24,
+    )
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph("Device Activity Report", styles["Title"]))
+    story.append(Paragraph(f"Device: {device_display}", styles["Normal"]))
+    story.append(Paragraph(f"Generated at: {created_at.replace('T',' ')} (Samoa time)", styles["Normal"]))
     if start_date or end_date:
         parts = []
         if start_date:
             parts.append(f"from {start_date}")
         if end_date:
             parts.append(f"to {end_date}" if start_date else f"up to {end_date}")
-        c.drawString(margin, y, "Date range: " + " ".join(parts))
-        y -= 12
+        story.append(Paragraph("Date range: " + " ".join(parts), styles["Normal"]))
+    story.append(Spacer(1, 12))
 
-    c.line(margin, y, w - margin, y)
-    y -= 16
-
-    c.setFont("Helvetica-Bold", 10)
-    headers = ["Beacon", "Type", "Event time", "Distance (m)", "Recorded at"]
-    colx = [margin, margin + 140, margin + 210, margin + 320, margin + 420]
-    for x, hdr in zip(colx, headers):
-        c.drawString(x, y, hdr)
-    y -= 12
-    c.line(margin, y, w - margin, y)
-    y -= 10
-
-    c.setFont("Helvetica", 9)
+    table_rows = []
     for beacon_name, typ, event_time, created_at2, distance in rows:
-        if y < 60:
-            c.showPage()
-            y = h - margin
-            c.setFont("Helvetica-Bold", 10)
-            for x, hdr in zip(colx, headers):
-                c.drawString(x, y, hdr)
-            y -= 12
-            c.line(margin, y, w - margin, y)
-            y -= 10
-            c.setFont("Helvetica", 9)
+        table_rows.append([
+            beacon_name or "",
+            (typ or "").upper(),
+            _format_event_time(event_time),
+            "-" if distance is None else f"{distance:.2f} m",
+            _format_event_time(created_at2),
+        ])
 
-        c.drawString(colx[0], y, str(beacon_name or ""))
-        c.drawString(colx[1], y, str(typ or "").upper())
-        c.drawString(colx[2], y, str(event_time or "").replace("T", " "))
-        c.drawString(colx[3], y, f"{distance:.2f}" if distance is not None else "-")
-        c.drawString(colx[4], y, str(created_at2 or "").replace("T", " "))
-        y -= 12
-
-    c.save()
+    story.extend(_build_events_table(
+        styles,
+        ["Beacon", "Type", "Event time", "Distance", "Recorded at"],
+        table_rows,
+        [180, 70, 150, 90, 150],
+    ))
+    doc.build(story)
 
     # store in history table for the Activity Reports page
     summary = f"{len(rows)} events (device)"
@@ -330,4 +371,3 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
         conn.close()
 
     return pdf_path
-
