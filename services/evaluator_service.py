@@ -1,8 +1,8 @@
 import threading
 import time
-from datetime import datetime
 
 from database import get_db
+from services.beacon_logic import format_samoa_time
 from services.notifications_service import emit_notification
 
 # Beacon behavior
@@ -20,7 +20,7 @@ def _now_unix() -> int:
 
 
 def _fmt_time(unix_ts: int) -> str:
-    return datetime.utcfromtimestamp(unix_ts).strftime('%Y-%m-%d %H:%M:%S UTC')
+    return format_samoa_time(unix_ts)
 
 
 def _ph(pg: bool) -> str:
