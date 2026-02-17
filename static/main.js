@@ -7,6 +7,8 @@ let beaconPrevState = {}; // for in/out detection
 let beaconLastStatusAt = {}; // key -> last status-notification timestamp (ms)
 let notifications = [];
 let lastNotifId = 0;
+let lastNotifStorageKey = 'ble:lastNotifId';
+let seenNotifIds = new Set();
 let reports = [];
 let unreadCount = 0;
 let heatLayer = null;
@@ -151,8 +153,11 @@ async function fetchAndUpdateMapData() {
 
 function startPolling() {
   fetchAndUpdateMapData();
-  fetchRecentNotifications();
-  setInterval(() => { fetchAndUpdateMapData(); fetchRecentNotifications(); }, FETCH_INTERVAL_MS);
+  fetchRecentNotifications({ silent: true, prime: true });
+  setInterval(() => {
+    fetchAndUpdateMapData();
+    fetchRecentNotifications();
+  }, FETCH_INTERVAL_MS);
 }
 
 
@@ -462,6 +467,9 @@ function addNotification(type, beaconName, eventTime, distance, options) {
   if (opts.beaconId) msg.beacon_id = opts.beaconId;
   if (opts.deviceIdent) msg.device_ident = opts.deviceIdent;
   notifications.push(msg);
+  if (notifications.length > 200) {
+    notifications = notifications.slice(-200);
+  }
 
   // Only persist real events (IN/LEFT, alerts, etc.) to the backend.
   // Local-only status updates stay in memory so history and PDFs stay clean.
@@ -477,12 +485,12 @@ function addNotification(type, beaconName, eventTime, distance, options) {
     }
   }
 
-  unreadCount += 1;
-  updateNotificationBadge();
-  renderNotificationsList();
-
-  // pop-up toast
-  try { showToast(msg); } catch (e) {}
+  if (!opts.silent) {
+    unreadCount += 1;
+    updateNotificationBadge();
+    renderNotificationsList();
+    try { showToast(msg); } catch (e) {}
+  }
 }
 
 
@@ -614,7 +622,16 @@ function setupNotificationsUI() {
   }
 }
 
-async function fetchRecentNotifications() {
+async function fetchRecentNotifications(options) {
+  const opts = options || {};
+  const silent = !!opts.silent;
+  const prime = !!opts.prime;
+  if (prime) {
+    const stored = Number(localStorage.getItem(lastNotifStorageKey) || 0);
+    if (Number.isFinite(stored) && stored > 0) {
+      lastNotifId = stored;
+    }
+  }
   try {
     const resp = await fetch(`/api/notifications/recent?since_id=${lastNotifId}`);
     if (!resp.ok) return;
@@ -624,6 +641,12 @@ async function fetchRecentNotifications() {
 
     items.forEach(item => {
       lastNotifId = Math.max(lastNotifId, item.id || 0);
+      if (item.id && seenNotifIds.has(item.id)) {
+        return;
+      }
+      if (item.id) {
+        seenNotifIds.add(item.id);
+      }
       const displayName = item.beacon_name || item.beacon_id || 'Unknown';
       const msg = {
         type: item.type || 'event',
@@ -635,12 +658,20 @@ async function fetchRecentNotifications() {
       };
 
       notifications.push(msg);
-      unreadCount += 1;
-      try { showToast(msg); } catch (e) {}
+      if (notifications.length > 200) {
+        notifications = notifications.slice(-200);
+      }
+      if (!silent) {
+        unreadCount += 1;
+        try { showToast(msg); } catch (e) {}
+      }
     });
 
-    updateNotificationBadge();
-    renderNotificationsList();
+    localStorage.setItem(lastNotifStorageKey, String(lastNotifId));
+    if (!silent || prime) {
+      updateNotificationBadge();
+      renderNotificationsList();
+    }
   } catch (e) {
     console.error('Failed to fetch recent notifications', e);
   }
@@ -824,6 +855,10 @@ function setupMenu() {
 // ---- Init ----
 
 document.addEventListener('DOMContentLoaded', () => {
+  const stored = Number(localStorage.getItem(lastNotifStorageKey) || 0);
+  if (Number.isFinite(stored) && stored > 0) {
+    lastNotifId = stored;
+  }
   initMap();
   setupMenu();
   setupRenameModalHandlers();
