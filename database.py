@@ -19,6 +19,9 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT",
     "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS beacon_id TEXT",
+    "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION",
+    "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION",
+    "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT",
 ]
 
 
@@ -74,6 +77,9 @@ def init_db():
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS online INTEGER DEFAULT 0")
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT")
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_online_ts BIGINT")
+            cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION")
+            cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION")
+            cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT")
 
             # notifications
             cur.execute("""
@@ -171,7 +177,10 @@ def init_db():
                 device_ident TEXT,
                 online INTEGER DEFAULT 0,
                 last_seen_ts INTEGER,
-                last_online_ts INTEGER
+                last_online_ts INTEGER,
+                last_lat REAL,
+                last_lon REAL,
+                last_payload_ts INTEGER
             )
         """)
         cur.execute("""
@@ -229,6 +238,16 @@ def init_db():
                 pdf_path TEXT
             )
         """)
+
+        # SQLite migrations for existing DBs
+        cur.execute("PRAGMA table_info(device_states)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "last_lat" not in existing_cols:
+            cur.execute("ALTER TABLE device_states ADD COLUMN last_lat REAL")
+        if "last_lon" not in existing_cols:
+            cur.execute("ALTER TABLE device_states ADD COLUMN last_lon REAL")
+        if "last_payload_ts" not in existing_cols:
+            cur.execute("ALTER TABLE device_states ADD COLUMN last_payload_ts INTEGER")
 
         conn.commit()
         print("[init_db] sqlite schema ready ✅")

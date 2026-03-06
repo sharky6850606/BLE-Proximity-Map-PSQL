@@ -7,6 +7,9 @@ from services.uptime_service import log_uptime_snapshot
 
 flespi_bp = Blueprint("flespi", __name__)
 
+# Keep online across expected staggered flespi packets (device/beacon can arrive separately).
+OFFLINE_AFTER_SEC = 15 * 60
+
 
 def _extract_messages(payload):
     if payload is None:
@@ -31,7 +34,7 @@ def flespi_receiver():
 
     now_ts = int(time.time())
     processed = 0
-    seen = set()
+    seen = {}  # ident -> latest snap
     beacon_updates = []
 
     for raw in msgs:
@@ -42,7 +45,7 @@ def flespi_receiver():
         if not ident:
             continue
         latest_messages[ident] = snap
-        seen.add(ident)
+        seen[ident] = snap
         processed += 1
         for b in snap.get("beacons") or []:
             bid = b.get("id")
@@ -64,15 +67,31 @@ def flespi_receiver():
     try:
         conn = get_db()
         ph = _db_ph(conn)
-        for ident in seen:
+        for ident, snap in seen.items():
+            payload_ts = int(snap.get("timestamp_raw") or now_ts)
+            lat = snap.get("lat")
+            lon = snap.get("lon")
             conn.execute(
-                f"INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts) "
-                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph}) "
+                f"INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts, last_lat, last_lon, last_payload_ts) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph}) "
                 "ON CONFLICT(device_key) DO UPDATE SET "
                 "state=excluded.state, last_change_ts=excluded.last_change_ts, device_ident=excluded.device_ident, "
-                "online=excluded.online, last_seen_ts=excluded.last_seen_ts, last_online_ts=excluded.last_online_ts",
-                (ident, "online", now_ts, ident, 1, now_ts, now_ts),
+                "online=excluded.online, last_seen_ts=excluded.last_seen_ts, last_online_ts=excluded.last_online_ts, "
+                "last_lat=COALESCE(excluded.last_lat, device_states.last_lat), "
+                "last_lon=COALESCE(excluded.last_lon, device_states.last_lon), "
+                "last_payload_ts=excluded.last_payload_ts",
+                (ident, "online", now_ts, ident, 1, now_ts, now_ts, lat, lon, payload_ts),
             )
+        # Recompute online/offline from freshness so analytics/uptime stay accurate.
+        conn.execute(
+            f"UPDATE device_states SET online=0, state='offline' WHERE last_seen_ts IS NULL OR last_seen_ts < {ph}",
+            (now_ts - OFFLINE_AFTER_SEC,),
+        )
+        conn.execute(
+            f"UPDATE device_states SET online=1, state='online', last_change_ts={ph} WHERE last_seen_ts >= {ph}",
+            (now_ts, now_ts - OFFLINE_AFTER_SEC),
+        )
+
         for beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi in beacon_updates:
             conn.execute(
                 f"INSERT INTO beacon_states "

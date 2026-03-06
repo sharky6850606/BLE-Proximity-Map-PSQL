@@ -20,39 +20,67 @@ def _ensure_dir(path: str) -> str:
     return ab
 
 
+def _status_label(state, missing):
+    if missing:
+        return "Missing"
+    if state == "in":
+        return "In range"
+    if state == "out":
+        return "Out of range"
+    return "Unknown"
+
+
 def generate_daily_report():
     conn = get_db()
     try:
-        rows = conn.execute("SELECT id, name FROM beacon_names ORDER BY id").fetchall()
-        beacon_list = [(r[0], r[1]) for r in rows]
+        rows = conn.execute(
+            "SELECT bn.id, bn.name, bs.state, bs.missing, bs.last_seen_ts, bs.device_ident "
+            "FROM beacon_names bn "
+            "LEFT JOIN beacon_states bs ON bn.id = bs.beacon_id "
+            "ORDER BY bn.id"
+        ).fetchall()
+
+        # If a beacon has never been renamed (not in beacon_names), still include it from live state.
+        extra = conn.execute(
+            "SELECT bs.beacon_id, NULL AS name, bs.state, bs.missing, bs.last_seen_ts, bs.device_ident "
+            "FROM beacon_states bs "
+            "LEFT JOIN beacon_names bn ON bn.id = bs.beacon_id "
+            "WHERE bn.id IS NULL "
+            "ORDER BY bs.beacon_id"
+        ).fetchall()
+        rows.extend(extra)
+
         device_rows = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
-        device_names = {r[0]: r[1] for r in device_rows}
+        device_names = {str(r[0]): (r[1] or str(r[0])) for r in device_rows if r and r[0]}
     finally:
         conn.close()
 
     entries = []
-    for bid, bname in beacon_list:
-        status = "Offline"
-        last_seen = ""
-        last_device = ""
-        for dev_id, snap in latest_messages.items():
-            if dev_id == "DAILY_REPORT" or not isinstance(snap, dict):
-                continue
-            for b in (snap.get("beacons") or []):
-                if b.get("id") == bid:
-                    status = "Online"
-                    last_seen = b.get("last_seen") or ""
-                    last_device = device_names.get(dev_id) or dev_id
-                    break
+    for bid, bname, state, missing, last_seen_ts, device_ident in rows:
+        if not bid:
+            continue
+        device_ident = str(device_ident) if device_ident else ""
+        last_device = device_names.get(device_ident) if device_ident else ""
         entries.append({
-            "id": bid,
-            "name": bname or "",
-            "status": status,
-            "last_seen": last_seen,
-            "last_device": last_device,
+            "id": str(bid),
+            "name": bname or str(bid),
+            "status": _status_label(state, bool(missing)),
+            "last_seen": format_samoa_time(int(last_seen_ts)) if last_seen_ts else "",
+            "last_device": last_device or device_ident,
         })
 
-    entries.sort(key=lambda e: (e.get("status") != "Online", e.get("name") or "", e.get("id") or ""))
+    # Deduplicate by beacon id (prefer row with latest last_seen)
+    dedup = {}
+    for e in entries:
+        prev = dedup.get(e["id"])
+        if not prev:
+            dedup[e["id"]] = e
+            continue
+        if e.get("last_seen", "") >= prev.get("last_seen", ""):
+            dedup[e["id"]] = e
+    entries = list(dedup.values())
+
+    entries.sort(key=lambda e: (e.get("name") or "", e.get("id") or ""))
 
     now = time.time()
     created_at = format_samoa_time(now).replace(" ", "T")
@@ -64,8 +92,9 @@ def generate_daily_report():
     summary = f"{len(entries)} beacons"
     conn = get_db()
     try:
+        ph = _db_ph(conn)
         conn.execute(
-            "INSERT INTO daily_reports (created_at, summary, pdf_path, report_json) VALUES (%s,%s,%s,%s)",
+            f"INSERT INTO daily_reports (created_at, summary, pdf_path, report_json) VALUES ({ph},{ph},{ph},{ph})",
             (created_at, summary, pdf_path, json.dumps(entries)),
         )
         conn.commit()
@@ -202,7 +231,7 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
             data.append([
                 _format_event_time(event_time),
                 (ntype or "").upper(),
-                "" if dist is None else f"{dist:.2f} m",
+                _format_distance(dist),
                 device_name or "",
             ])
         story.extend(_build_events_table(styles, ["Time", "Type", "Distance", "Device"], data, [130, 70, 90, 200]))
@@ -241,6 +270,13 @@ def _build_events_table(styles, headers, rows, col_widths):
     ]))
 
     return [t]
+
+
+def _format_distance(value):
+    try:
+        return f"{float(value):.2f} m"
+    except Exception:
+        return "-"
 
 
 def _format_event_time(value):
@@ -346,7 +382,7 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
             beacon_name or "",
             (typ or "").upper(),
             _format_event_time(event_time),
-            "-" if distance is None else f"{distance:.2f} m",
+            _format_distance(distance),
             _format_event_time(created_at2),
         ])
 
