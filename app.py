@@ -21,10 +21,21 @@ app.register_blueprint(flespi_bp)
 os.makedirs(os.path.abspath(os.getenv("REPORTS_DIR", "reports")), exist_ok=True)
 os.makedirs(os.path.abspath(os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports")), exist_ok=True)
 
-if os.getenv("DISABLE_DAILY_THREAD", "0") != "1":
+def _threads_enabled_for_runtime() -> bool:
+    """Allow background workers in normal runtime but keep tests deterministic."""
+    if os.getenv("DISABLE_BACKGROUND_THREADS", "0") == "1":
+        return False
+    if os.getenv("TESTING", "0") == "1":
+        return False
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    return True
+
+
+if _threads_enabled_for_runtime() and os.getenv("DISABLE_DAILY_THREAD", "0") != "1":
     start_daily_thread()
 
-if os.getenv("DISABLE_EVALUATOR_THREAD", "0") != "1":
+if _threads_enabled_for_runtime() and os.getenv("DISABLE_EVALUATOR_THREAD", "0") != "1":
     start_evaluator_thread()
 
 
