@@ -123,7 +123,8 @@ def reports_history():
 def download_daily_report(report_id: int):
     conn = get_db()
     try:
-        row = conn.execute("SELECT pdf_path FROM daily_reports WHERE id=%s", (report_id,)).fetchone()
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        row = conn.execute(f"SELECT pdf_path FROM daily_reports WHERE id={ph}", (report_id,)).fetchone()
     finally:
         conn.close()
     if not row or not row[0] or not os.path.exists(row[0]):
@@ -157,7 +158,8 @@ def notifications_history():
 def download_activity_report(report_id: int):
     conn = get_db()
     try:
-        row = conn.execute("SELECT pdf_path FROM activity_reports WHERE id=%s", (report_id,)).fetchone()
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        row = conn.execute(f"SELECT pdf_path FROM activity_reports WHERE id={ph}", (report_id,)).fetchone()
     finally:
         conn.close()
     if not row or not row[0] or not os.path.exists(row[0]):
@@ -167,6 +169,10 @@ def download_activity_report(report_id: int):
 
 @app.route("/activity-reports", methods=["GET","POST"])
 def activity_reports_page():
+    beacons = []
+    devices = []
+    reports = []
+
     conn = get_db()
     try:
         beacons_rows = conn.execute("SELECT id, name FROM beacon_names ORDER BY id").fetchall()
@@ -174,17 +180,19 @@ def activity_reports_page():
         reports = conn.execute("SELECT id, beacon_name, created_at, summary, pdf_path FROM activity_reports ORDER BY id DESC LIMIT 200").fetchall()
 
         # Templates expect {ident, label} dictionaries
-        beacons = []
         for r in beacons_rows:
             bid = r[0] if not isinstance(r, dict) else r.get("id")
             bname = r[1] if not isinstance(r, dict) else r.get("name")
-            beacons.append({"ident": str(bid), "label": (bname or str(bid))})
+            if bid:
+                beacons.append({"ident": str(bid), "label": (bname or str(bid))})
 
-        devices = []
         for r in devices_rows:
             did = r[0] if not isinstance(r, dict) else r.get("id")
             dname = r[1] if not isinstance(r, dict) else r.get("name")
-            devices.append({"ident": str(did), "label": (dname or str(did))})
+            if did:
+                devices.append({"ident": str(did), "label": (dname or str(did))})
+    except Exception as e:
+        print(f"[warn] activity-reports load failed: {e}")
     finally:
         conn.close()
     if request.method == "POST":
@@ -237,10 +245,10 @@ def uptime_page():
     conn = get_db()
     try:
         latest = conn.execute(
-            "SELECT timestamp, device_count, beacon_count, status FROM uptime_logs ORDER BY id DESC LIMIT 1"
+            "SELECT id, timestamp, device_count, beacon_count, status FROM uptime_logs ORDER BY id DESC LIMIT 1"
         ).fetchone()
         logs = conn.execute(
-            "SELECT timestamp, device_count, beacon_count, status FROM uptime_logs ORDER BY id DESC LIMIT 200"
+            "SELECT id, timestamp, device_count, beacon_count, status FROM uptime_logs ORDER BY id DESC LIMIT 200"
         ).fetchall()
     finally:
         conn.close()

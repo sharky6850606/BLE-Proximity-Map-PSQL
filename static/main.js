@@ -23,7 +23,7 @@ let renameContext = null;       // { type: 'device'|'beacon', id: string }
 
 
 // Smart status alert thresholds (tuned for FMC data every 5 minutes)
-const OFFLINE_THRESHOLD_SECONDS = 20 * 60;   // 20 minutes with 5 min sends (~4 missed updates)
+const OFFLINE_THRESHOLD_SECONDS = 15 * 60;   // 15 minutes with 5 min sends (~3 missed updates)
 const DISTANCE_ALERT_THRESHOLD_METERS = 5;   // "Far" if beyond 5m
 
 // Smart alert state
@@ -68,7 +68,7 @@ async function fetchAndUpdateMapData() {
       const key = `${b.deviceIdent || 'unknown'}::${b.id}`;
       const dist = (b.distance != null) ? Number(b.distance) : 9999;
 
-      const nowState = dist <= 3 ? 'in' : 'out';
+      const nowState = dist <= 5 ? 'in' : 'out';
       const prev = beaconPrevState[key];
 
       // Status ping every 10 minutes while the beacon stays in the same state
@@ -82,16 +82,11 @@ async function fetchAndUpdateMapData() {
         return;
       }
 
-      // One-time notifications when a beacon actually moves in/out of range
+      // Beacon transitions are generated server-side by evaluator_service.
+      // Keep local state in sync to avoid duplicate browser-generated notifications.
       if (prev !== nowState) {
         beaconPrevState[key] = nowState;
         beaconLastStatusAt[key] = nowMs; // reset status timer on real movement
-
-        if (nowState === 'out') {
-          addNotification('left', b.name || b.id, b.last_seen, dist, { beaconId: b.id, deviceIdent: b.deviceIdent });
-        } else {
-          addNotification('in', b.name || b.id, b.last_seen, dist, { beaconId: b.id, deviceIdent: b.deviceIdent });
-        }
         return;
       }
 

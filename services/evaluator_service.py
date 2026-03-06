@@ -6,9 +6,9 @@ from services.beacon_logic import format_samoa_time
 from services.notifications_service import emit_notification
 
 # Beacon behavior
-IN_RANGE_METERS = 3.0
-STILL_INTERVAL_SEC = 30 * 60       # still_in / still_out every 30 minutes
-MISSING_AFTER_SEC = 30 * 60        # missing if not seen for 30 minutes
+IN_RANGE_METERS = 5.0
+STILL_INTERVAL_SEC = 10 * 60       # still_in / still_out every 10 minutes
+MISSING_AFTER_SEC = 15 * 60        # missing if not seen for 15 minutes (~3 missed 5min packets)
 
 
 def _is_postgres(conn) -> bool:
@@ -33,8 +33,8 @@ def run_once():
     We rely on /flespi to continuously update beacon_states.last_seen_ts and last_distance.
     This evaluator:
       - emits IN / LEFT on true state transitions
-      - emits STILL_IN / STILL_OUT every 15 minutes while state remains unchanged
-      - emits MISSING after 30 minutes unseen, and FOUND when seen again
+      - emits STILL_IN / STILL_OUT every 10 minutes while state remains unchanged
+      - emits MISSING after 15 minutes unseen, and FOUND when seen again
 
     All emitted notifications are persisted.
     """

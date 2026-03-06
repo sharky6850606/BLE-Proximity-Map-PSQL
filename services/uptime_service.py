@@ -1,21 +1,40 @@
 import time
 from database import get_db
-from services.beacon_logic import latest_messages, format_samoa_time
+from services.beacon_logic import format_samoa_time
+
+
+def _db_ph(conn):
+    return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+
 
 def log_uptime_snapshot():
     conn = get_db()
     try:
+        ph = _db_ph(conn)
         now = time.time()
-        device_count = sum(1 for k in latest_messages.keys() if k != "DAILY_REPORT")
-        beacon_count = 0
-        for k, v in latest_messages.items():
-            if k == "DAILY_REPORT":
-                continue
-            if isinstance(v, dict):
-                beacon_count += len(v.get("beacons") or [])
+        now_ts = int(now)
+
+        device_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM device_states WHERE online = {ph}",
+            (1,),
+        ).fetchone()[0] or 0)
+
+        beacon_count = int(conn.execute(
+            f"SELECT COUNT(*) FROM beacon_states "
+            f"WHERE last_seen_ts IS NOT NULL AND last_seen_ts >= {ph} AND (missing IS NULL OR missing = 0)",
+            (now_ts - (15 * 60),),
+        ).fetchone()[0] or 0)
+
+        if device_count <= 0:
+            status = "NO_DEVICES"
+        elif beacon_count <= 0:
+            status = "NO_BEACONS"
+        else:
+            status = "OK"
+
         conn.execute(
-            "INSERT INTO uptime_logs (timestamp, device_count, beacon_count, status) VALUES (%s,%s,%s,%s)",
-            (format_samoa_time(now), device_count, beacon_count, "OK"),
+            f"INSERT INTO uptime_logs (timestamp, device_count, beacon_count, status) VALUES ({ph},{ph},{ph},{ph})",
+            (format_samoa_time(now), device_count, beacon_count, status),
         )
         conn.commit()
     finally:

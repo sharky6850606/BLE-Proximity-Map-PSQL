@@ -10,7 +10,7 @@ DB_PATH = os.getenv("DB_PATH", "beacons.db")  # used only if DATABASE_URL is not
 # Time / TTL
 # =============================
 SAMOA_OFFSET_HOURS = int(os.getenv("SAMOA_OFFSET_HOURS", "13"))
-TTL_SECONDS = int(os.getenv("TTL_SECONDS", "180"))  # 3 minutes
+TTL_SECONDS = int(os.getenv("TTL_SECONDS", "900"))  # 15 minutes (flespi packets can be every 5 minutes)
 
 # =============================
 # RSSI distance model (simple)
