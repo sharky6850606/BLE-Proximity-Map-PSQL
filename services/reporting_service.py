@@ -3,6 +3,7 @@ import json
 import time
 import threading
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -28,6 +29,11 @@ def _status_label(state, missing):
     if state == "out":
         return "Out of range"
     return "Unknown"
+
+
+def _paragraph_text(value) -> str:
+    """Return XML-safe text for reportlab Paragraph content."""
+    return escape(str(value or ""), {'"': '&quot;', "'": '&apos;'})
 
 
 def generate_daily_report():
@@ -111,7 +117,7 @@ def _write_daily_pdf(pdf_path, created_at, entries):
     story = []
 
     story.append(Paragraph("Daily Beacon Report", styles["Title"]))
-    story.append(Paragraph(f"Generated at: {created_at.replace('T',' ')} (Samoa time)", styles["Normal"]))
+    story.append(Paragraph(f"Generated at: {_paragraph_text(created_at.replace('T',' '))} (Samoa time)", styles["Normal"]))
     story.append(Spacer(1, 12))
 
     table_data = [[
@@ -122,10 +128,10 @@ def _write_daily_pdf(pdf_path, created_at, entries):
     ]]
     for e in entries:
         table_data.append([
-            Paragraph(str(e.get("name") or e.get("id") or ""), styles["BodyText"]),
-            Paragraph(str(e.get("status") or ""), styles["BodyText"]),
-            Paragraph(str(e.get("last_seen") or ""), styles["BodyText"]),
-            Paragraph(str(e.get("last_device") or ""), styles["BodyText"]),
+            Paragraph(_paragraph_text(e.get("name") or e.get("id") or ""), styles["BodyText"]),
+            Paragraph(_paragraph_text(e.get("status") or ""), styles["BodyText"]),
+            Paragraph(_paragraph_text(e.get("last_seen") or ""), styles["BodyText"]),
+            Paragraph(_paragraph_text(e.get("last_device") or ""), styles["BodyText"]),
         ])
 
     table = Table(table_data, colWidths=[160, 70, 160, 140], repeatRows=1)
@@ -160,7 +166,7 @@ def _fetch_notifications(conn, where_clause: str, params: tuple):
         "LEFT JOIN beacon_names bn ON n.beacon_id = bn.id "
         "LEFT JOIN devices d ON n.device_ident = d.id "
         + where_clause
-        + " ORDER BY id ASC"
+        + " ORDER BY n.id ASC"
     )
     return conn.execute(query, params).fetchall()
 
@@ -218,8 +224,8 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph(f"Activity Report - Beacon {beacon_display}", styles["Title"]))
-    story.append(Paragraph(f"Range: {start_date} to {end_date}", styles["Normal"]))
+    story.append(Paragraph(f"Activity Report - Beacon {_paragraph_text(beacon_display)}", styles["Title"]))
+    story.append(Paragraph(f"Range: {_paragraph_text(start_date)} to {_paragraph_text(end_date)}", styles["Normal"]))
     story.append(Spacer(1, 12))
 
     if not rows:
@@ -256,7 +262,7 @@ def _build_events_table(styles, headers, rows, col_widths):
     """Return list of flowables for an events table."""
     table_data = [[Paragraph(h, styles["BodyText"]) for h in headers]]
     for row in rows:
-        table_data.append([Paragraph(str(cell or ""), styles["BodyText"]) for cell in row])
+        table_data.append([Paragraph(_paragraph_text(cell), styles["BodyText"]) for cell in row])
 
     t = Table(table_data, colWidths=col_widths, hAlign='LEFT', repeatRows=1)
     t.setStyle(TableStyle([
@@ -365,15 +371,15 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
     styles = getSampleStyleSheet()
     story = []
     story.append(Paragraph("Device Activity Report", styles["Title"]))
-    story.append(Paragraph(f"Device: {device_display}", styles["Normal"]))
-    story.append(Paragraph(f"Generated at: {created_at.replace('T',' ')} (Samoa time)", styles["Normal"]))
+    story.append(Paragraph(f"Device: {_paragraph_text(device_display)}", styles["Normal"]))
+    story.append(Paragraph(f"Generated at: {_paragraph_text(created_at.replace('T',' '))} (Samoa time)", styles["Normal"]))
     if start_date or end_date:
         parts = []
         if start_date:
             parts.append(f"from {start_date}")
         if end_date:
             parts.append(f"to {end_date}" if start_date else f"up to {end_date}")
-        story.append(Paragraph("Date range: " + " ".join(parts), styles["Normal"]))
+        story.append(Paragraph(_paragraph_text("Date range: " + " ".join(parts)), styles["Normal"]))
     story.append(Spacer(1, 12))
 
     table_rows = []
@@ -398,8 +404,9 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
     summary = f"{len(rows)} events (device)"
     conn = get_db()
     try:
+        ph = _db_ph(conn)
         conn.execute(
-            "INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES (%s,%s,%s,%s)",
+            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES ({ph},{ph},{ph},{ph})",
             (f"[Device] {device_ident}", created_at, summary, pdf_path),
         )
         conn.commit()
