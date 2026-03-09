@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -8,7 +9,8 @@ from services.notifications_service import emit_notification
 # Beacon behavior
 IN_RANGE_METERS = 5.0
 STILL_INTERVAL_SEC = 10 * 60       # still_in / still_out every 10 minutes
-MISSING_AFTER_SEC = 15 * 60        # missing if not seen for 15 minutes (~3 missed 5min packets)
+MISSING_AFTER_SEC = int(os.getenv("MISSING_AFTER_SEC", str(30 * 60)))
+# missing if not seen for 30 minutes (configurable via MISSING_AFTER_SEC)
 
 
 def _is_postgres(conn) -> bool:
@@ -34,7 +36,7 @@ def run_once():
     This evaluator:
       - emits IN / LEFT on true state transitions
       - emits STILL_IN / STILL_OUT every 10 minutes while state remains unchanged
-      - emits MISSING after 15 minutes unseen, and FOUND when seen again
+      - emits MISSING after configured timeout unseen (default 30 minutes), and FOUND when seen again
 
     All emitted notifications are persisted.
     """
