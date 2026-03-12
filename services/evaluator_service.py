@@ -3,6 +3,7 @@ import threading
 import time
 
 from database import get_db
+from config import TTL_SECONDS
 from services.beacon_logic import format_samoa_time
 from services.notifications_service import emit_notification
 
@@ -11,6 +12,8 @@ IN_RANGE_METERS = 5.0
 STILL_INTERVAL_SEC = 10 * 60       # still_in / still_out every 10 minutes
 MISSING_AFTER_SEC = int(os.getenv("MISSING_AFTER_SEC", str(30 * 60)))
 # missing if not seen for 30 minutes (configurable via MISSING_AFTER_SEC)
+PRESENCE_FRESH_SEC = int(os.getenv("PRESENCE_FRESH_SEC", str(TTL_SECONDS)))
+# while stale (hidden from map), suppress still_in/still_out until beacon is fresh again
 
 
 def _is_postgres(conn) -> bool:
@@ -60,7 +63,8 @@ def run_once():
                last_distance,
                last_change_ts,
                last_status_ts,
-               missing
+               missing,
+               active
         FROM beacon_states
         """
     )
@@ -77,6 +81,7 @@ def run_once():
             last_change_ts,
             last_status_ts,
             missing_db,
+            active_db,
         ) = row
 
         if last_seen_ts is None:
@@ -119,6 +124,16 @@ def run_once():
         if is_missing_now:
             continue
 
+        # If a beacon is stale enough to be hidden from map, suppress in/out status pings.
+        # This prevents STILL_OUT notifications for beacons that are currently not displayed.
+        if age > PRESENCE_FRESH_SEC:
+            if int(active_db or 0) != 0:
+                cur.execute(
+                    f"UPDATE beacon_states SET active=0, last_status_ts={ph} WHERE beacon_key={ph}",
+                    (now, beacon_key),
+                )
+            continue
+
         # --- In / Out evaluation ---
         dist = float(last_distance) if last_distance is not None else None
         state_now = "in" if (dist is not None and dist <= IN_RANGE_METERS) else "out"
@@ -146,6 +161,14 @@ def run_once():
             cur.execute(
                 f"UPDATE beacon_states SET state={ph}, last_change_ts={ph}, last_status_ts={ph}, active=1 WHERE beacon_key={ph}",
                 (state_now, now, now, beacon_key),
+            )
+            continue
+
+        # Beacon is fresh and stable. Ensure it is marked active on first fresh cycle.
+        if int(active_db or 0) == 0:
+            cur.execute(
+                f"UPDATE beacon_states SET active=1, last_status_ts={ph} WHERE beacon_key={ph}",
+                (now, beacon_key),
             )
             continue
 
