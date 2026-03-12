@@ -533,6 +533,13 @@ def analytics_page():
             last_time = window_start_dt
             in_seconds = 0
             out_seconds = 0
+
+            if events and window_start_dt and events[0][0] > window_start_dt:
+                first_type = events[0][1]
+                # Infer the state at window start so percentages represent the full window.
+                # Example: first event "in" means beacon was out before entering.
+                last_state = "out" if first_type == "in" else "in"
+
             for ts, typ in events:
                 state = "in" if typ in ("in", "still_in") else "out"
                 if last_state and last_time:
