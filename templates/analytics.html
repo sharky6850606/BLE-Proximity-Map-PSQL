@@ -139,19 +139,6 @@
 
     <div class="grid12" style="margin-bottom:14px;">
       <div class="card span-6">
-        <h2>Devices & beacons over time</h2>
-        <div class="chart-wrap"><canvas id="uptimeChart"></canvas></div>
-        <div class="note">Snapshots from device pings.</div>
-      </div>
-      <div class="card span-6">
-        <h2>Activity per hour</h2>
-        <div class="chart-wrap"><canvas id="eventChart"></canvas></div>
-        <div class="note">IN / LEFT / STILL events in the last {{ window_hours }} hours.</div>
-      </div>
-    </div>
-
-    <div class="grid12" style="margin-bottom:14px;">
-      <div class="card span-6">
         <h2>Current beacon status</h2>
         <div class="chart-wrap" style="height:240px;"><canvas id="statusChart"></canvas></div>
         <div class="note">Live state pulled from beacon states table.</div>
@@ -278,62 +265,12 @@
   </div>
 
   <script>
-    const uptimeLabels = {{ uptime_labels|tojson }};
-    const deviceCounts = {{ device_counts|tojson }};
-    const beaconCounts = {{ beacon_counts|tojson }};
-
-    const eventLabels = {{ event_labels|tojson }};
-    const eventIn = {{ event_in|tojson }};
-    const eventLeft = {{ event_left|tojson }};
-    const eventStillIn = {{ event_still_in|tojson }};
-    const eventStillOut = {{ event_still_out|tojson }};
-
     const statusLabels = {{ status_labels|tojson }};
     const statusCounts = {{ status_counts|tojson }};
 
     const presenceByBeacon = {{ presence_by_beacon_json|safe }};
 
     let presenceChart = null;
-
-    function makeLineChart(ctx, labels, a, b) {
-      return new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label: 'Devices', data: a, tension: 0.25, borderColor: '#38bdf8' },
-            { label: 'Beacons', data: b, tension: 0.25, borderColor: '#4ade80' }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'top' } },
-          scales: { x: { ticks: { maxTicksLimit: 8 } } }
-        }
-      });
-    }
-
-    function makeStackedEventChart(ctx) {
-      return new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: eventLabels,
-          datasets: [
-            { label: 'IN', data: eventIn, backgroundColor: 'rgba(74,222,128,0.8)' },
-            { label: 'LEFT', data: eventLeft, backgroundColor: 'rgba(251,191,36,0.8)' },
-            { label: 'STILL IN', data: eventStillIn, backgroundColor: 'rgba(56,189,248,0.7)' },
-            { label: 'STILL OUT', data: eventStillOut, backgroundColor: 'rgba(248,113,113,0.7)' }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'top' } },
-          scales: { x: { stacked: true, ticks: { maxTicksLimit: 10 } }, y: { stacked: true } }
-        }
-      });
-    }
 
     function makeStatusChart(ctx) {
       return new Chart(ctx, {
@@ -406,12 +343,6 @@
     }
 
     window.addEventListener('load', () => {
-      const uptimeCtx = document.getElementById('uptimeChart');
-      if (uptimeCtx && uptimeLabels.length) makeLineChart(uptimeCtx, uptimeLabels, deviceCounts, beaconCounts);
-
-      const eventCtx = document.getElementById('eventChart');
-      if (eventCtx && eventLabels.length) makeStackedEventChart(eventCtx);
-
       const statusCtx = document.getElementById('statusChart');
       if (statusCtx && statusLabels.length) makeStatusChart(statusCtx);
 
@@ -420,4 +351,3 @@
   </script>
 </body>
 </html>
-
