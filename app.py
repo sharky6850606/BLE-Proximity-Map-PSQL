@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for, abort
 import json
 
@@ -285,7 +285,9 @@ def analytics_page():
         return None
 
     payload = {
-        "window_hours": 24,
+        "window_hours": 0,
+        "window_label": "",
+        "window_start": "",
         "selected_beacon": "",
         "uptime_labels": [],
         "device_counts": [],
@@ -320,14 +322,32 @@ def analytics_page():
     try:
         ph = _ph(conn)
         now_ts = time.time()
-        window_start = format_samoa_time(now_ts - (payload["window_hours"] * 3600))
+        # Analytics window resets daily at 12:00 PM Samoa time.
+        now_local_dt = datetime.utcfromtimestamp(now_ts) + timedelta(hours=13)
+        noon_local_dt = now_local_dt.replace(hour=12, minute=0, second=0, microsecond=0)
+        if now_local_dt < noon_local_dt:
+            noon_local_dt = noon_local_dt - timedelta(days=1)
+        window_start = noon_local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        payload["window_start"] = window_start
+        payload["window_hours"] = max(int((now_local_dt - noon_local_dt).total_seconds() // 3600), 0)
+        payload["window_label"] = f"since {noon_local_dt.strftime('%Y-%m-%d 12:00 PM')}"
 
         # -------- UPTIME LOGS --------
         try:
-            rows = conn.execute(
-                "SELECT timestamp, device_count, beacon_count, COALESCE(status,'OK') AS status "
-                "FROM uptime_logs ORDER BY id DESC LIMIT 500"
-            ).fetchall()
+            if getattr(conn, "backend", "postgres") == "postgres":
+                rows = conn.execute(
+                    "SELECT timestamp, device_count, beacon_count, COALESCE(status,'OK') AS status "
+                    "FROM uptime_logs WHERE timestamp::timestamp >= %s "
+                    "ORDER BY id DESC LIMIT 500",
+                    (window_start,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT timestamp, device_count, beacon_count, COALESCE(status,'OK') AS status "
+                    "FROM uptime_logs WHERE timestamp >= ? "
+                    "ORDER BY id DESC LIMIT 500",
+                    (window_start,),
+                ).fetchall()
         except Exception:
             rows = []
 
@@ -436,16 +456,20 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 trows = conn.execute(
-                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, COUNT(*) "
-                    "FROM notifications WHERE created_at::timestamp >= %s "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, COUNT(*) "
+                    "FROM notifications n "
+                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
+                    "WHERE n.created_at::timestamp >= %s "
                     "AND type IN ('in','left','still_in','still_out') "
                     "GROUP BY name, type",
                     (window_start,),
                 ).fetchall()
             else:
                 trows = conn.execute(
-                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, COUNT(*) "
-                    "FROM notifications WHERE created_at >= ? "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, COUNT(*) "
+                    "FROM notifications n "
+                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
+                    "WHERE n.created_at >= ? "
                     "AND type IN ('in','left','still_in','still_out') "
                     "GROUP BY name, type",
                     (window_start,),
@@ -500,16 +524,20 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 prow = conn.execute(
-                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, event_time "
-                    "FROM notifications WHERE created_at::timestamp >= %s "
-                    "AND type IN ('in','left','still_in','still_out') ORDER BY event_time",
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, n.event_time "
+                    "FROM notifications n "
+                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
+                    "WHERE n.created_at::timestamp >= %s "
+                    "AND n.type IN ('in','left','still_in','still_out') ORDER BY n.event_time",
                     (window_start,),
                 ).fetchall()
             else:
                 prow = conn.execute(
-                    "SELECT COALESCE(beacon_name, beacon_id, 'Unknown') AS name, type, event_time "
-                    "FROM notifications WHERE created_at >= ? "
-                    "AND type IN ('in','left','still_in','still_out') ORDER BY event_time",
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, n.event_time "
+                    "FROM notifications n "
+                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
+                    "WHERE n.created_at >= ? "
+                    "AND n.type IN ('in','left','still_in','still_out') ORDER BY n.event_time",
                     (window_start,),
                 ).fetchall()
         except Exception:
