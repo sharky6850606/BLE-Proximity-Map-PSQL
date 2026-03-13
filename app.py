@@ -46,7 +46,7 @@ def samoa_iso_now():
 @app.route("/api/notifications", methods=["POST"])
 def save_notification():
     data = request.get_json(silent=True) or {}
-    ntype = (data.get("type") or "").strip()
+    ntype = (data.get("type") or "").strip().lower()
     name = (data.get("name") or "").strip()
     event_time = (data.get("time") or "").strip()
     beacon_id = (data.get("beacon_id") or data.get("beacon") or "").strip() or None
@@ -424,18 +424,18 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 erows = conn.execute(
-                    "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, type, COUNT(*) "
+                    "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, lower(type) AS event_type, COUNT(*) "
                     "FROM notifications WHERE created_at::timestamp >= %s "
-                    "AND type IN ('in','left','still_in','still_out') "
-                    "GROUP BY hr, type ORDER BY hr",
+                    "AND lower(type) IN ('in','left','still_in','still_out') "
+                    "GROUP BY hr, event_type ORDER BY hr",
                     (window_start,),
                 ).fetchall()
             else:
                 erows = conn.execute(
-                    "SELECT substr(created_at, 1, 13) || ':00' AS hr, type, COUNT(*) "
+                    "SELECT substr(created_at, 1, 13) || ':00' AS hr, lower(type) AS event_type, COUNT(*) "
                     "FROM notifications WHERE created_at >= ? "
-                    "AND type IN ('in','left','still_in','still_out') "
-                    "GROUP BY hr, type ORDER BY hr",
+                    "AND lower(type) IN ('in','left','still_in','still_out') "
+                    "GROUP BY hr, event_type ORDER BY hr",
                     (window_start,),
                 ).fetchall()
         except Exception:
@@ -456,22 +456,22 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 trows = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, COUNT(*) "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, COUNT(*) "
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at::timestamp >= %s "
-                    "AND type IN ('in','left','still_in','still_out') "
-                    "GROUP BY name, type",
+                    "AND lower(n.type) IN ('in','left','still_in','still_out') "
+                    "GROUP BY name, event_type",
                     (window_start,),
                 ).fetchall()
             else:
                 trows = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, COUNT(*) "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, COUNT(*) "
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at >= ? "
-                    "AND type IN ('in','left','still_in','still_out') "
-                    "GROUP BY name, type",
+                    "AND lower(n.type) IN ('in','left','still_in','still_out') "
+                    "GROUP BY name, event_type",
                     (window_start,),
                 ).fetchall()
         except Exception:
@@ -524,20 +524,20 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 prow = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, n.event_time "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, n.event_time "
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at::timestamp >= %s "
-                    "AND n.type IN ('in','left','still_in','still_out') ORDER BY n.event_time",
+                    "AND lower(n.type) IN ('in','left','still_in','still_out') ORDER BY n.event_time",
                     (window_start,),
                 ).fetchall()
             else:
                 prow = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, n.type, n.event_time "
+                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, n.event_time "
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at >= ? "
-                    "AND n.type IN ('in','left','still_in','still_out') ORDER BY n.event_time",
+                    "AND lower(n.type) IN ('in','left','still_in','still_out') ORDER BY n.event_time",
                     (window_start,),
                 ).fetchall()
         except Exception:
