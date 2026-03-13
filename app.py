@@ -322,15 +322,15 @@ def analytics_page():
     try:
         ph = _ph(conn)
         now_ts = time.time()
-        # Analytics window resets daily at 12:00 PM Samoa time.
+        # Analytics window resets daily at 12:00 AM (midnight) Samoa time.
         now_local_dt = datetime.utcfromtimestamp(now_ts) + timedelta(hours=13)
-        noon_local_dt = now_local_dt.replace(hour=12, minute=0, second=0, microsecond=0)
-        if now_local_dt < noon_local_dt:
-            noon_local_dt = noon_local_dt - timedelta(days=1)
-        window_start = noon_local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        midnight_local_dt = now_local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        if now_local_dt < midnight_local_dt:
+            midnight_local_dt = midnight_local_dt - timedelta(days=1)
+        window_start = midnight_local_dt.strftime("%Y-%m-%d %H:%M:%S")
         payload["window_start"] = window_start
-        payload["window_hours"] = max(int((now_local_dt - noon_local_dt).total_seconds() // 3600), 0)
-        payload["window_label"] = f"since {noon_local_dt.strftime('%Y-%m-%d 12:00 PM')}"
+        payload["window_hours"] = max(int((now_local_dt - midnight_local_dt).total_seconds() // 3600), 0)
+        payload["window_label"] = f"since {midnight_local_dt.strftime('%Y-%m-%d 12:00 AM')}"
 
         # -------- UPTIME LOGS --------
         try:
