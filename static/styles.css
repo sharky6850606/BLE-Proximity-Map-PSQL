@@ -300,6 +300,23 @@ html, body {
   gap: 4px;
 }
 
+.header-admin-link {
+  border: 1px solid rgba(96, 165, 250, 0.55);
+  background: rgba(37, 99, 235, 0.18);
+  color: #bfdbfe;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.header-admin-link:hover {
+  background: rgba(37, 99, 235, 0.32);
+  color: #eff6ff;
+}
+
 .main-title {
   text-align: center;
   margin: 4px 0 10px 0;

@@ -43,6 +43,9 @@
         <div class="header-title-block">
           <h1>BLE Proximity Map</h1>
         </div>
+        {% if is_admin_user %}
+        <a class="header-admin-link" href="{{ url_for('admin.dashboard') }}">Admin</a>
+        {% endif %}
         <button id="notif-button" class="header-icon-btn">
           <span class="icon">🔔</span>
           <span id="notifications-badge" class="notif-badge"></span>
