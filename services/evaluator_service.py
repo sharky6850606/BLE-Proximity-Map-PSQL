@@ -10,8 +10,6 @@ from services.notifications_service import emit_notification
 # Beacon behavior
 IN_RANGE_METERS = 5.0
 STILL_INTERVAL_SEC = 10 * 60       # still_in / still_out every 10 minutes
-MISSING_AFTER_SEC = int(os.getenv("MISSING_AFTER_SEC", str(30 * 60)))
-# missing if not seen for 30 minutes (configurable via MISSING_AFTER_SEC)
 PRESENCE_FRESH_SEC = int(os.getenv("PRESENCE_FRESH_SEC", str(TTL_SECONDS)))
 # while stale (hidden from map), suppress still_in/still_out until beacon is fresh again
 
@@ -39,7 +37,7 @@ def run_once():
     This evaluator:
       - emits IN / LEFT on true state transitions
       - emits STILL_IN / STILL_OUT every 10 minutes while state remains unchanged
-      - emits MISSING after configured timeout unseen (default 30 minutes), and FOUND when seen again
+      - does not emit MISSING; missing is now decided only by the 6 PM customer audit
 
     All emitted notifications are persisted.
     """
@@ -88,41 +86,8 @@ def run_once():
             continue
 
         age = now - int(last_seen_ts)
-        is_missing_now = age >= MISSING_AFTER_SEC
-        was_missing = bool(missing_db)
-
-        # --- Missing / Found ---
-        if is_missing_now and not was_missing:
-            emit_notification(
-                "missing",
-                beacon_id,
-                event_time=event_time,
-                device_ident=device_ident,
-                distance=None,
-            )
-            cur.execute(
-                f"UPDATE beacon_states SET missing=1, last_missing_ts={ph}, last_status_ts={ph} WHERE beacon_key={ph}",
-                (now, now, beacon_key),
-            )
-            continue
-
-        if (not is_missing_now) and was_missing:
-            emit_notification(
-                "found",
-                beacon_id,
-                event_time=event_time,
-                device_ident=device_ident,
-                distance=None,
-            )
-            cur.execute(
-                f"UPDATE beacon_states SET missing=0, last_missing_ts={ph}, last_status_ts={ph} WHERE beacon_key={ph}",
-                (now, now, beacon_key),
-            )
-            # fallthrough: after FOUND we also evaluate in/out state
-
-        # If missing right now, do not emit in/out or still events.
-        if is_missing_now:
-            continue
+        # Missing/found audit status now lives in customer_assets. This evaluator
+        # only handles live proximity state and periodic still-in/still-out events.
 
         # If a beacon is stale enough to be hidden from map, suppress in/out status pings.
         # This prevents STILL_OUT notifications for beacons that are currently not displayed.

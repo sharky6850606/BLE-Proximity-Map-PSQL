@@ -817,9 +817,12 @@ function setupMenu() {
   const downloadLatestBtn = document.getElementById('menu-download-latest');
   const reportsHistoryBtn = document.getElementById('menu-reports-history');
   const notifHistoryBtn = document.getElementById('menu-notif-history');
+  const auditReportsBtn = document.getElementById('menu-audit-reports');
   const activityReportsBtn = document.getElementById('menu-activity-reports');
   const uptimeBtn = document.getElementById('menu-uptime');
   const analyticsBtn = document.getElementById('menu-analytics');
+  const adminBtn = document.getElementById('menu-admin');
+  const logoutBtn = document.getElementById('menu-logout');
 
   function goTo(url) {
     closeMenu();
@@ -835,6 +838,9 @@ function setupMenu() {
   if (notifHistoryBtn) {
     notifHistoryBtn.addEventListener('click', () => goTo('/notifications/history'));
   }
+  if (auditReportsBtn) {
+    auditReportsBtn.addEventListener('click', () => goTo('/audit-reports'));
+  }
   if (activityReportsBtn) {
     activityReportsBtn.addEventListener('click', () => goTo('/activity-reports'));
   }
@@ -843,6 +849,12 @@ function setupMenu() {
   }
   if (analyticsBtn) {
     analyticsBtn.addEventListener('click', () => goTo('/analytics'));
+  }
+  if (adminBtn) {
+    adminBtn.addEventListener('click', () => goTo('/admin/'));
+  }
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => goTo('/logout'));
   }
 
 }

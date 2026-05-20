@@ -3,6 +3,7 @@ from flask import Blueprint, request
 
 from database import get_db
 from services.beacon_logic import simplify_message, latest_messages
+from services.audit_service import mark_asset_found_if_missing
 from services.uptime_service import log_uptime_snapshot
 
 flespi_bp = Blueprint("flespi", __name__)
@@ -47,6 +48,7 @@ def flespi_receiver():
         latest_messages[ident] = snap
         seen[ident] = snap
         processed += 1
+        snap_ts = int(snap.get("timestamp_raw") or now_ts)
         for b in snap.get("beacons") or []:
             bid = b.get("id")
             if not bid:
@@ -56,7 +58,7 @@ def flespi_receiver():
                     f"{ident}:{bid}",
                     ident,
                     bid,
-                    now_ts,
+                    snap_ts,
                     b.get("distance"),
                     b.get("rssi"),
                 )
@@ -100,8 +102,21 @@ def flespi_receiver():
                 "ON CONFLICT(beacon_key) DO UPDATE SET "
                 "device_ident=excluded.device_ident, beacon_id=excluded.beacon_id, "
                 "last_seen_ts=excluded.last_seen_ts, last_distance=excluded.last_distance, "
-                "last_rssi=excluded.last_rssi, active=1",
+                "last_rssi=excluded.last_rssi, active=1, missing=0",
                 (beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi),
+            )
+            conn.execute(
+                f"INSERT INTO beacon_observations (observed_ts, device_ident, beacon_id, distance, rssi, created_at) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
+                (last_seen_ts, device_ident, beacon_id, last_distance, last_rssi, int(time.time())),
+            )
+            mark_asset_found_if_missing(
+                conn,
+                beacon_id=beacon_id,
+                device_ident=device_ident,
+                seen_ts=last_seen_ts,
+                distance=last_distance,
+                rssi=last_rssi,
             )
         conn.commit()
     except Exception as e:
