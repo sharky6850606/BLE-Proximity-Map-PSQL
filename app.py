@@ -11,7 +11,7 @@ from services.beacon_logic import format_samoa_time
 from services.reporting_service import start_daily_thread, generate_daily_report, generate_activity_report
 from services.evaluator_service import start_evaluator_thread
 from services.auth_service import auth_bp, login_required, admin_required, is_admin, current_user, device_scope_clause, can_access_device, allowed_device_idents
-from config import AUDIT_REPORTS_DIR
+from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-change-me")
@@ -23,9 +23,22 @@ app.register_blueprint(map_bp)
 app.register_blueprint(flespi_bp)
 app.register_blueprint(admin_bp)
 
-os.makedirs(os.path.abspath(os.getenv("REPORTS_DIR", "reports")), exist_ok=True)
-os.makedirs(os.path.abspath(os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports")), exist_ok=True)
-os.makedirs(os.path.abspath(AUDIT_REPORTS_DIR), exist_ok=True)
+def _ensure_startup_dir(path: str, fallback: str) -> str:
+    """Create report directories without crashing the whole web process."""
+    target = os.path.abspath(path or fallback)
+    try:
+        os.makedirs(target, exist_ok=True)
+        return target
+    except PermissionError as e:
+        fallback_target = os.path.abspath(fallback)
+        print(f"[warn] cannot create {target}: {e}; using {fallback_target}")
+        os.makedirs(fallback_target, exist_ok=True)
+        return fallback_target
+
+
+_ensure_startup_dir(REPORTS_DIR, "reports")
+_ensure_startup_dir(ACTIVITY_REPORTS_DIR, "activity_reports")
+_ensure_startup_dir(AUDIT_REPORTS_DIR, "audit_reports")
 
 def _threads_enabled_for_runtime() -> bool:
     """Allow background workers in normal runtime but keep tests deterministic."""
