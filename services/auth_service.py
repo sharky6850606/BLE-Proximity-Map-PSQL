@@ -135,7 +135,7 @@ def can_access_device(device_ident, conn=None, user=None):
     return str(device_ident) in allowed
 
 
-@auth_bp.context_processor
+@auth_bp.app_context_processor
 def inject_auth_user():
     return {"current_user": current_user(), "is_admin_user": is_admin()}
 
