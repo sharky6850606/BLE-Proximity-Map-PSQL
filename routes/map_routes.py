@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, render_template, redirect, url_for, reques
 
 from config import TTL_SECONDS
 from database import get_db
+from services.audit_log_service import log_event
 from services.beacon_logic import latest_messages, format_samoa_time
 from services.auth_service import (
     can_access_device,
@@ -176,13 +177,24 @@ def rename_beacon():
                 "ON CONFLICT(id) DO UPDATE SET name=excluded.name",
                 (beacon_id, new_name),
             )
+            log_customer_id = None
         else:
+            log_customer_id = user.get("customer_id")
             conn.execute(
                 f"INSERT INTO customer_beacon_names (customer_id, beacon_id, name, updated_at) "
                 f"VALUES ({ph},{ph},{ph},{ph}) "
                 "ON CONFLICT(customer_id, beacon_id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
-                (user.get("customer_id"), beacon_id, new_name, format_samoa_time(time.time()).replace(" ", "T")),
+                (log_customer_id, beacon_id, new_name, format_samoa_time(time.time()).replace(" ", "T")),
             )
+        log_event(
+            "rename.beacon",
+            target_type="beacon",
+            target_id=beacon_id,
+            details=f"Renamed beacon {beacon_id} to {new_name or '(blank)'}",
+            actor_user=user,
+            customer_id=log_customer_id,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -214,14 +226,25 @@ def rename_device():
                 "ON CONFLICT(id) DO UPDATE SET name=excluded.name, color=excluded.color",
                 (device_id, new_name, color),
             )
+            log_customer_id = None
         else:
+            log_customer_id = user.get("customer_id")
             conn.execute(
                 f"INSERT INTO customer_device_settings (customer_id, device_ident, name, color, updated_at) "
                 f"VALUES ({ph},{ph},{ph},{ph},{ph}) "
                 "ON CONFLICT(customer_id, device_ident) DO UPDATE SET "
                 "name=excluded.name, color=excluded.color, updated_at=excluded.updated_at",
-                (user.get("customer_id"), device_id, new_name, color, format_samoa_time(time.time()).replace(" ", "T")),
+                (log_customer_id, device_id, new_name, color, format_samoa_time(time.time()).replace(" ", "T")),
             )
+        log_event(
+            "rename.device",
+            target_type="device",
+            target_id=device_id,
+            details=f"Renamed device {device_id} to {new_name or '(blank)'}",
+            actor_user=user,
+            customer_id=log_customer_id,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()

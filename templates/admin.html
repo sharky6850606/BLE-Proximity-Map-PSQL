@@ -208,6 +208,26 @@
       min-width: 36px;
       padding: 6px 10px;
     }
+    .log-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .log-tab {
+      margin: 0;
+      background: #1f2937;
+      border: 1px solid rgba(148, 163, 184, 0.32);
+      color: #cbd5e1;
+    }
+    .log-tab.active {
+      background: #2563eb;
+      border-color: #60a5fa;
+      color: #fff;
+    }
+    .log-row.hidden-log-row {
+      display: none;
+    }
 
     @media (max-width: 1260px) {
       .grid { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
@@ -232,6 +252,18 @@
   {% for a in assets %}{% if a[5] %}{% set active_assets.count = active_assets.count + 1 %}{% endif %}{% endfor %}
   {% set missing_beacons = namespace(count=0) %}
   {% for b in active_beacons %}{% if b[5] %}{% set missing_beacons.count = missing_beacons.count + 1 %}{% endif %}{% endfor %}
+  {% set log_counts = namespace(login=0, create=0, actions=0, rename=0) %}
+  {% for l in audit_logs %}
+    {% if l[4] in ["login", "logout"] %}
+      {% set log_counts.login = log_counts.login + 1 %}
+    {% elif l[4] in ["admin.create_customer", "admin.create_user"] %}
+      {% set log_counts.create = log_counts.create + 1 %}
+    {% elif l[4] in ["rename.beacon", "rename.device"] %}
+      {% set log_counts.rename = log_counts.rename + 1 %}
+    {% else %}
+      {% set log_counts.actions = log_counts.actions + 1 %}
+    {% endif %}
+  {% endfor %}
 
   <main class="admin-shell">
     <div class="topbar">
@@ -373,6 +405,7 @@
         </div>
         <div class="summary-row"><span>Login and logout tracking</span><strong>On</strong></div>
         <div class="summary-row"><span>Admin action tracking</span><strong>On</strong></div>
+        <div class="summary-row"><span>Rename tracking</span><strong>On</strong></div>
         <div class="summary-row"><span>Newest log</span><strong>{% if audit_logs %}{{ audit_logs[0][0] }}{% else %}None yet{% endif %}</strong></div>
         <button type="button" class="secondary-btn" data-modal-open="audit-logs-modal">View all</button>
       </section>
@@ -560,12 +593,28 @@
   <div class="modal-backdrop" id="audit-logs-modal" aria-hidden="true">
     <section class="modal" role="dialog" aria-modal="true" aria-labelledby="audit-logs-title">
       <div class="modal-header"><div><div class="modal-title" id="audit-logs-title">Audit Logs</div><div class="muted">{{ audit_logs|length }} recent security and admin events</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="log-tabs" role="tablist" aria-label="Audit log categories">
+        <button type="button" class="log-tab active" data-log-filter="all">All {{ audit_logs|length }}</button>
+        <button type="button" class="log-tab" data-log-filter="login">Login {{ log_counts.login }}</button>
+        <button type="button" class="log-tab" data-log-filter="create">Create {{ log_counts.create }}</button>
+        <button type="button" class="log-tab" data-log-filter="actions">Actions {{ log_counts.actions }}</button>
+        <button type="button" class="log-tab" data-log-filter="rename">Renames {{ log_counts.rename }}</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Time</th><th>Actor</th><th>Role</th><th>Customer</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
           <tbody>
             {% for l in audit_logs %}
-            <tr>
+            {% if l[4] in ["login", "logout"] %}
+              {% set log_category = "login" %}
+            {% elif l[4] in ["admin.create_customer", "admin.create_user"] %}
+              {% set log_category = "create" %}
+            {% elif l[4] in ["rename.beacon", "rename.device"] %}
+              {% set log_category = "rename" %}
+            {% else %}
+              {% set log_category = "actions" %}
+            {% endif %}
+            <tr class="log-row" data-log-category="{{ log_category }}">
               <td>{{ l[0] }}</td>
               <td><strong>{{ l[1] or "system" }}</strong></td>
               <td>{{ l[2] or "" }}</td>
@@ -607,6 +656,19 @@
     document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
       backdrop.addEventListener('click', (event) => {
         if (event.target === backdrop) closeModal(backdrop);
+      });
+    });
+
+    document.querySelectorAll('[data-log-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const filter = button.dataset.logFilter;
+        document.querySelectorAll('[data-log-filter]').forEach((tab) => {
+          tab.classList.toggle('active', tab === button);
+        });
+        document.querySelectorAll('.log-row').forEach((row) => {
+          const show = filter === 'all' || row.dataset.logCategory === filter;
+          row.classList.toggle('hidden-log-row', !show);
+        });
       });
     });
 
