@@ -3,242 +3,582 @@
 <head>
   <meta charset="UTF-8" />
   <title>Admin - BLE Proximity Map</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   <style>
-    body { background:#020617; color:#e5e7eb; padding:18px; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    a { color:#60a5fa; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
-    h1 { margin:0; font-size:1.4rem; }
-    h2 { font-size:1rem; margin:0 0 10px 0; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; }
-    .card { background:#111827; border:1px solid rgba(75,85,99,0.9); border-radius:8px; padding:14px; }
-    label { display:block; margin-top:8px; font-size:0.8rem; color:#cbd5e1; }
-    input, select { width:100%; box-sizing:border-box; margin-top:4px; padding:8px; border-radius:6px; border:1px solid #4b5563; background:#020617; color:#f9fafb; }
-    button { margin-top:10px; padding:8px 10px; border:none; border-radius:6px; background:#2563eb; color:#fff; cursor:pointer; }
-    .danger { background:#991b1b; }
-    .muted { color:#9ca3af; font-size:0.82rem; }
-    table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.84rem; }
-    th, td { padding:7px 8px; border-bottom:1px solid rgba(148,163,184,0.25); text-align:left; vertical-align:top; }
-    th { color:#cbd5e1; }
-    .inline-form { display:inline; }
-    .inline-form button { margin:0; padding:4px 7px; font-size:0.75rem; }
+    :root {
+      color-scheme: dark;
+      --bg: #020617;
+      --panel: #111827;
+      --panel-2: #162033;
+      --line: rgba(148, 163, 184, 0.28);
+      --text: #f8fafc;
+      --muted: #9ca3af;
+      --blue: #2563eb;
+      --blue-soft: rgba(37, 99, 235, 0.14);
+      --red: #991b1b;
+      --green: #22c55e;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: #93c5fd; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .admin-shell { padding: 18px; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    h1 { margin: 0; font-size: 1.45rem; letter-spacing: 0; }
+    .subtitle { color: #bfdbfe; font-size: 0.9rem; margin-top: 4px; }
+    .top-links { display: flex; gap: 14px; align-items: center; font-weight: 700; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(280px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+    .grid-wide {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(360px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(75, 85, 99, 0.9);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 100%;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    h2 { font-size: 1rem; margin: 0; }
+    .metric {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      background: var(--blue-soft);
+      color: #bfdbfe;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    label { display: block; margin-top: 9px; font-size: 0.8rem; color: #cbd5e1; }
+    input, select {
+      width: 100%;
+      margin-top: 4px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: var(--text);
+      min-height: 36px;
+    }
+    input::placeholder { color: #8b93a3; }
+
+    button, .button-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 10px;
+      padding: 8px 10px;
+      min-height: 34px;
+      border: none;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 800;
+      font-size: 0.82rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    button:hover, .button-link:hover { filter: brightness(1.08); text-decoration: none; }
+    .secondary-btn {
+      margin-top: 0;
+      background: #1f2937;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+    .danger { background: var(--red); }
+    .muted { color: var(--muted); font-size: 0.82rem; }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      font-size: 0.86rem;
+    }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row strong { color: #e2e8f0; }
+
+    .table-wrap {
+      margin-top: 12px;
+      overflow: auto;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 8px;
+      max-height: 62vh;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 720px; }
+    th, td {
+      padding: 10px 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: #cbd5e1;
+      background: #0f172a;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .inline-form { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .inline-form button { margin: 0; padding: 5px 8px; min-height: 28px; font-size: 0.76rem; }
+    .reset-form {
+      display: grid;
+      grid-template-columns: minmax(150px, 1fr) auto;
+      gap: 8px;
+      margin-top: 8px;
+      max-width: 320px;
+    }
+    .reset-form input { margin: 0; min-height: 32px; }
+    .reset-form button { margin: 0; min-height: 32px; }
+    .actions-cell { min-width: 190px; }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      background: rgba(2, 6, 23, 0.72);
+      z-index: 1000;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(1180px, 96vw);
+      max-height: 88vh;
+      background: var(--panel);
+      border: 1px solid rgba(148, 163, 184, 0.38);
+      border-radius: 8px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+      padding: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .modal-title { font-size: 1.12rem; font-weight: 900; }
+    .modal-close {
+      margin: 0;
+      background: #1f2937;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      min-width: 36px;
+      padding: 6px 10px;
+    }
+
+    @media (max-width: 1260px) {
+      .grid { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
+    }
+    @media (max-width: 820px) {
+      .admin-shell { padding: 12px; }
+      .topbar { flex-direction: column; }
+      .grid, .grid-wide { grid-template-columns: 1fr; }
+      .modal-backdrop { padding: 10px; }
+      .modal { width: 100%; max-height: 92vh; }
+    }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <div>
-      <h1>Admin Console</h1>
-      <div class="muted">Manage customers, users, device access, and active beacon visibility.</div>
+  {% set active_customers = namespace(count=0) %}
+  {% for c in customers %}{% if c[3] %}{% set active_customers.count = active_customers.count + 1 %}{% endif %}{% endfor %}
+  {% set active_users = namespace(count=0) %}
+  {% for u in users %}{% if u[3] %}{% set active_users.count = active_users.count + 1 %}{% endif %}{% endfor %}
+  {% set online_devices = namespace(count=0) %}
+  {% for d in active_devices %}{% if d[1] %}{% set online_devices.count = online_devices.count + 1 %}{% endif %}{% endfor %}
+  {% set active_assets = namespace(count=0) %}
+  {% for a in assets %}{% if a[5] %}{% set active_assets.count = active_assets.count + 1 %}{% endif %}{% endfor %}
+  {% set missing_beacons = namespace(count=0) %}
+  {% for b in active_beacons %}{% if b[5] %}{% set missing_beacons.count = missing_beacons.count + 1 %}{% endif %}{% endfor %}
+
+  <main class="admin-shell">
+    <div class="topbar">
+      <div>
+        <h1>Admin Console</h1>
+        <div class="subtitle">Manage customers, users, device access, expected assets, and audit reporting.</div>
+      </div>
+      <div class="top-links">
+        <a href="{{ url_for('map.map_page') }}">Map</a>
+        <a href="{{ url_for('auth.logout') }}">Logout</a>
+      </div>
     </div>
-    <div><a href="{{ url_for('map.map_page') }}">Map</a> &nbsp; <a href="{{ url_for('auth.logout') }}">Logout</a></div>
-  </div>
 
-  <div class="grid">
-    <section class="card">
-      <h2>Create Customer</h2>
-      <form method="post" action="{{ url_for('admin.create_customer') }}">
-        <label>Name</label>
-        <input name="name" required />
-        <label>Slug</label>
-        <input name="slug" placeholder="optional" />
-        <button type="submit">Create customer</button>
-      </form>
-      <table>
-        <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-          {% for c in customers %}
-          <tr>
-            <td>{{ c[1] }}<div class="muted">{{ c[2] }}</div></td>
-            <td>{{ "Active" if c[3] else "Suspended" }}</td>
-            <td>
-              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_customer', customer_id=c[0]) }}">
-                <button class="{{ 'danger' if c[3] else '' }}" type="submit">{{ "Suspend" if c[3] else "Reactivate" }}</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <h2>Create Customer</h2>
+          <span class="metric">{{ active_customers.count }} active</span>
+        </div>
+        <form method="post" action="{{ url_for('admin.create_customer') }}">
+          <label>Name</label>
+          <input name="name" required />
+          <label>Slug</label>
+          <input name="slug" placeholder="optional" />
+          <button type="submit">Create customer</button>
+          <button type="button" class="secondary-btn" data-modal-open="customers-modal">View all</button>
+        </form>
+      </section>
 
-    <section class="card">
-      <h2>Create User</h2>
-      <form method="post" action="{{ url_for('admin.create_user') }}">
-        <label>Customer</label>
-        <select name="customer_id">
-          <option value="">Internal admin</option>
-          {% for c in customers if c[3] %}
-          <option value="{{ c[0] }}">{{ c[1] }}</option>
-          {% endfor %}
-        </select>
-        <label>Role</label>
-        <select name="role">
-          <option value="customer_user">Customer user</option>
-          <option value="customer_admin">Customer admin</option>
-          <option value="admin">Internal admin</option>
-        </select>
-        <label>Email</label>
-        <input name="email" type="email" required />
-        <label>Temporary password</label>
-        <input name="password" type="text" required />
-        <button type="submit">Create user</button>
-      </form>
-      <table>
-        <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-          {% for u in users %}
-          <tr>
-            <td>{{ u[1] }}<div class="muted">{{ u[4] or "Internal" }}{% if u[5] %} · Last login {{ u[5] }}{% endif %}</div></td>
-            <td>{{ u[2] }}</td>
-            <td>{{ "Active" if u[3] else "Suspended" }}</td>
-            <td>
-              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_user', user_id=u[0]) }}">
-                <button class="{{ 'danger' if u[3] else '' }}" type="submit">{{ "Suspend" if u[3] else "Reactivate" }}</button>
-              </form>
-              <form method="post" action="{{ url_for('admin.reset_user_password', user_id=u[0]) }}">
-                <input name="password" placeholder="new password" />
-                <button type="submit">Reset</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Create User</h2>
+          <span class="metric">{{ active_users.count }} active</span>
+        </div>
+        <form method="post" action="{{ url_for('admin.create_user') }}">
+          <label>Customer</label>
+          <select name="customer_id">
+            <option value="">Internal admin</option>
+            {% for c in customers if c[3] %}
+            <option value="{{ c[0] }}">{{ c[1] }}</option>
+            {% endfor %}
+          </select>
+          <label>Role</label>
+          <select name="role">
+            <option value="customer_user">Customer user</option>
+            <option value="customer_admin">Customer admin</option>
+            <option value="admin">Internal admin</option>
+          </select>
+          <label>Email</label>
+          <input name="email" type="email" required />
+          <label>Temporary password</label>
+          <input name="password" type="text" required />
+          <button type="submit">Create user</button>
+          <button type="button" class="secondary-btn" data-modal-open="users-modal">View all</button>
+        </form>
+      </section>
 
-    <section class="card">
-      <h2>Assign Device</h2>
-      <form method="post" action="{{ url_for('admin.assign_device') }}">
-        <label>Customer</label>
-        <select name="customer_id" required>
-          {% for c in customers if c[3] %}
-          <option value="{{ c[0] }}">{{ c[1] }}</option>
-          {% endfor %}
-        </select>
-        <label>Device IMEI / ident</label>
-        <input name="device_ident" placeholder="863719068581413" required />
-        <label>Label</label>
-        <input name="label" placeholder="optional" />
-        <button type="submit">Assign device</button>
-      </form>
-      <table>
-        <thead><tr><th>Customer</th><th>Device</th><th></th></tr></thead>
-        <tbody>
-          {% for d in devices %}
-          <tr>
-            <td>{{ d[1] }}</td>
-            <td>{{ d[2] }}<div class="muted">{{ d[3] }}</div></td>
-            <td>
-              <form class="inline-form" method="post" action="{{ url_for('admin.remove_device', assignment_id=d[0]) }}">
-                <button class="danger" type="submit">Remove</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Assign Device</h2>
+          <span class="metric">{{ devices|length }} assigned</span>
+        </div>
+        <form method="post" action="{{ url_for('admin.assign_device') }}">
+          <label>Customer</label>
+          <select name="customer_id" required>
+            {% for c in customers if c[3] %}
+            <option value="{{ c[0] }}">{{ c[1] }}</option>
+            {% endfor %}
+          </select>
+          <label>Device IMEI / ident</label>
+          <input name="device_ident" placeholder="863719068581413" required />
+          <label>Label</label>
+          <input name="label" placeholder="optional" />
+          <button type="submit">Assign device</button>
+          <button type="button" class="secondary-btn" data-modal-open="assignments-modal">View all</button>
+        </form>
+      </section>
 
-    <section class="card">
-      <h2>Active Devices</h2>
-      <table>
-        <thead><tr><th>Device</th><th>Online</th><th>Last seen</th><th>Location</th></tr></thead>
-        <tbody>
-          {% for d in active_devices %}
-          <tr>
-            <td>{{ d[0] }}</td>
-            <td>{{ "Yes" if d[1] else "No" }}</td>
-            <td>{{ d[2] }}</td>
-            <td>{{ d[3] }}, {{ d[4] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-  </div>
+      <section class="card">
+        <div class="card-head">
+          <h2>Active Devices</h2>
+          <span class="metric">{{ online_devices.count }} online</span>
+        </div>
+        <div class="summary-row"><span>Total devices</span><strong>{{ active_devices|length }}</strong></div>
+        <div class="summary-row"><span>Online now</span><strong>{{ online_devices.count }}</strong></div>
+        <div class="summary-row"><span>Assigned devices</span><strong>{{ devices|length }}</strong></div>
+        <button type="button" class="secondary-btn" data-modal-open="active-devices-modal">View all</button>
+      </section>
+    </div>
 
-  <div class="grid" style="margin-top:14px;">
-    <section class="card">
-      <h2>Expected Assets</h2>
-      <form method="post" action="{{ url_for('admin.create_asset') }}">
-        <label>Customer</label>
-        <select name="customer_id" required>
-          {% for c in customers if c[3] %}
-          <option value="{{ c[0] }}">{{ c[1] }}</option>
-          {% endfor %}
-        </select>
-        <label>Beacon ID</label>
-        <input name="beacon_id" placeholder="FF3B1F8D-F0C8-55AA-AAE6-C9379B730055" required />
-        <label>Asset name</label>
-        <input name="name" placeholder="Excavator, generator, compressor..." />
-        <label>Expected device IMEI / ident</label>
-        <input name="expected_device_ident" placeholder="optional; blank means any assigned device" />
-        <button type="submit">Save expected asset</button>
-      </form>
-      <table>
-        <thead><tr><th>Customer</th><th>Asset</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-          {% for a in assets %}
-          <tr>
-            <td>{{ a[1] }}</td>
-            <td>{{ a[3] }}<div class="muted">{{ a[2] }}{% if a[4] %} · expected on {{ a[4] }}{% endif %}</div></td>
-            <td>{{ a[6] or "unknown" }}{% if a[7] %}<div class="muted">Missing since {{ a[7] }}</div>{% endif %}{% if a[8] %}<div class="muted">Found {{ a[8] }}</div>{% endif %}</td>
-            <td>
-              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_asset', asset_id=a[0]) }}">
-                <button class="{{ 'danger' if a[5] else '' }}" type="submit">{{ "Deactivate" if a[5] else "Reactivate" }}</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
+    <div class="grid-wide">
+      <section class="card">
+        <div class="card-head">
+          <h2>Expected Assets</h2>
+          <span class="metric">{{ active_assets.count }} active</span>
+        </div>
+        <form method="post" action="{{ url_for('admin.create_asset') }}">
+          <label>Customer</label>
+          <select name="customer_id" required>
+            {% for c in customers if c[3] %}
+            <option value="{{ c[0] }}">{{ c[1] }}</option>
+            {% endfor %}
+          </select>
+          <label>Beacon ID</label>
+          <input name="beacon_id" placeholder="FF3B1F8D-F0C8-55AA-AAE6-C9379B730055" required />
+          <label>Asset name</label>
+          <input name="name" placeholder="Excavator, generator, compressor..." />
+          <label>Expected device IMEI / ident</label>
+          <input name="expected_device_ident" placeholder="optional; blank means any assigned device" />
+          <button type="submit">Save expected asset</button>
+          <button type="button" class="secondary-btn" data-modal-open="assets-modal">View all</button>
+        </form>
+      </section>
 
-    <section class="card">
-      <h2>Daily Audits</h2>
-      <form method="post" action="{{ url_for('admin.run_audit_now') }}">
-        <label>Run audit for customer now</label>
-        <select name="customer_id" required>
-          {% for c in customers if c[3] %}
-          <option value="{{ c[0] }}">{{ c[1] }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit">Run audit</button>
-      </form>
-      <table>
-        <thead><tr><th>Customer</th><th>Scheduled</th><th>Status</th><th>Email</th></tr></thead>
-        <tbody>
-          {% for a in audits %}
-          <tr>
-            <td>{{ a[1] }}</td>
-            <td>{{ a[2] }}<div class="muted">{{ a[3] }} to {{ a[4] }}</div>{% if a[6] %}<div><a href="{{ url_for('download_audit_report', audit_id=a[0]) }}">Download</a></div>{% endif %}</td>
-            <td>{{ a[5] }}</td>
-            <td>{{ a[7] or "not sent" }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <section class="card">
+        <div class="card-head">
+          <h2>Daily Audits</h2>
+          <span class="metric">{{ audits|length }} recent</span>
+        </div>
+        <form method="post" action="{{ url_for('admin.run_audit_now') }}">
+          <label>Run audit for customer now</label>
+          <select name="customer_id" required>
+            {% for c in customers if c[3] %}
+            <option value="{{ c[0] }}">{{ c[1] }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Run audit</button>
+          <button type="button" class="secondary-btn" data-modal-open="audits-modal">View all</button>
+        </form>
+        <div class="summary-row"><span>Audit reports</span><strong>{{ audits|length }}</strong></div>
+        <div class="summary-row"><span>Recent beacons</span><strong>{{ active_beacons|length }}</strong></div>
+        <button type="button" class="secondary-btn" data-modal-open="beacons-modal">View active beacons</button>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="customers-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="customers-title">
+      <div class="modal-header"><div><div class="modal-title" id="customers-title">Customers</div><div class="muted">{{ customers|length }} total customers</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Created</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody>
+            {% for c in customers %}
+            <tr>
+              <td><strong>{{ c[1] }}</strong></td>
+              <td>{{ c[2] }}</td>
+              <td>{{ "Active" if c[3] else "Suspended" }}</td>
+              <td>{{ c[4] }}</td>
+              <td>
+                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_customer', customer_id=c[0]) }}">
+                  <button class="{{ 'danger' if c[3] else '' }}" type="submit">{{ "Suspend" if c[3] else "Reactivate" }}</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
   </div>
 
-  <section class="card" style="margin-top:14px;">
-    <h2>Recent Active Beacons</h2>
-    <table>
-      <thead><tr><th>Beacon</th><th>Device</th><th>Last seen</th><th>Distance</th><th>RSSI</th><th>Missing</th></tr></thead>
-      <tbody>
-        {% for b in active_beacons %}
-        <tr>
-          <td>{{ b[0] }}</td>
-          <td>{{ b[1] }}</td>
-          <td>{{ b[2] }}</td>
-          <td>{{ b[3] }}</td>
-          <td>{{ b[4] }}</td>
-          <td>{{ "Yes" if b[5] else "No" }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
+  <div class="modal-backdrop" id="users-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="users-title">
+      <div class="modal-header"><div><div class="modal-title" id="users-title">Users</div><div class="muted">{{ users|length }} recent users</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>User</th><th>Customer</th><th>Role</th><th>Status</th><th>Last login</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td><strong>{{ u[1] }}</strong></td>
+              <td>{{ u[4] or "Internal" }}</td>
+              <td>{{ u[2] }}</td>
+              <td>{{ "Active" if u[3] else "Suspended" }}</td>
+              <td>{{ u[5] or "Never" }}</td>
+              <td>
+                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_user', user_id=u[0]) }}">
+                  <button class="{{ 'danger' if u[3] else '' }}" type="submit">{{ "Suspend" if u[3] else "Reactivate" }}</button>
+                </form>
+                <form class="reset-form" method="post" action="{{ url_for('admin.reset_user_password', user_id=u[0]) }}">
+                  <input name="password" placeholder="new password" />
+                  <button type="submit">Reset</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="assignments-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="assignments-title">
+      <div class="modal-header"><div><div class="modal-title" id="assignments-title">Device Assignments</div><div class="muted">{{ devices|length }} assigned devices</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Customer</th><th>Device</th><th>Label</th><th>Created</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody>
+            {% for d in devices %}
+            <tr>
+              <td>{{ d[1] }}</td>
+              <td><strong>{{ d[2] }}</strong></td>
+              <td>{{ d[3] or "" }}</td>
+              <td>{{ d[4] }}</td>
+              <td>
+                <form class="inline-form" method="post" action="{{ url_for('admin.remove_device', assignment_id=d[0]) }}">
+                  <button class="danger" type="submit">Remove</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="active-devices-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="active-devices-title">
+      <div class="modal-header"><div><div class="modal-title" id="active-devices-title">Active Devices</div><div class="muted">{{ active_devices|length }} devices in live state</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Device</th><th>Online</th><th>Last seen</th><th>Latitude</th><th>Longitude</th></tr></thead>
+          <tbody>
+            {% for d in active_devices %}
+            <tr>
+              <td><strong>{{ d[0] }}</strong></td>
+              <td>{{ "Yes" if d[1] else "No" }}</td>
+              <td>{{ d[2] }}</td>
+              <td>{{ d[3] }}</td>
+              <td>{{ d[4] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="assets-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="assets-title">
+      <div class="modal-header"><div><div class="modal-title" id="assets-title">Expected Assets</div><div class="muted">{{ assets|length }} configured assets</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Customer</th><th>Asset</th><th>Beacon ID</th><th>Expected Device</th><th>Status</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody>
+            {% for a in assets %}
+            <tr>
+              <td>{{ a[1] }}</td>
+              <td><strong>{{ a[3] }}</strong></td>
+              <td>{{ a[2] }}</td>
+              <td>{{ a[4] or "Any assigned device" }}</td>
+              <td>{{ a[6] or "unknown" }}{% if a[7] %}<div class="muted">Missing since {{ a[7] }}</div>{% endif %}{% if a[8] %}<div class="muted">Found {{ a[8] }}</div>{% endif %}</td>
+              <td>
+                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_asset', asset_id=a[0]) }}">
+                  <button class="{{ 'danger' if a[5] else '' }}" type="submit">{{ "Deactivate" if a[5] else "Reactivate" }}</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="audits-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="audits-title">
+      <div class="modal-header"><div><div class="modal-title" id="audits-title">Daily Audits</div><div class="muted">{{ audits|length }} recent audit runs</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Customer</th><th>Scheduled</th><th>Scan Window</th><th>Status</th><th>Email</th><th>Report</th></tr></thead>
+          <tbody>
+            {% for a in audits %}
+            <tr>
+              <td>{{ a[1] }}</td>
+              <td>{{ a[2] }}</td>
+              <td>{{ a[3] }} to {{ a[4] }}</td>
+              <td>{{ a[5] }}</td>
+              <td>{{ a[7] or "not sent" }}</td>
+              <td>{% if a[6] %}<a class="button-link" href="{{ url_for('download_audit_report', audit_id=a[0]) }}">Download</a>{% else %}<span class="muted">No report</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="beacons-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="beacons-title">
+      <div class="modal-header"><div><div class="modal-title" id="beacons-title">Recent Active Beacons</div><div class="muted">{{ active_beacons|length }} recent beacon states, {{ missing_beacons.count }} marked missing</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Beacon</th><th>Device</th><th>Last seen</th><th>Distance</th><th>RSSI</th><th>Missing</th></tr></thead>
+          <tbody>
+            {% for b in active_beacons %}
+            <tr>
+              <td><strong>{{ b[0] }}</strong></td>
+              <td>{{ b[1] }}</td>
+              <td>{{ b[2] }}</td>
+              <td>{{ b[3] }}</td>
+              <td>{{ b[4] }}</td>
+              <td>{{ "Yes" if b[5] else "No" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const openModal = (id) => {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+    };
+
+    const closeModal = (modal) => {
+      if (!modal) return;
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+    };
+
+    document.querySelectorAll('[data-modal-open]').forEach((button) => {
+      button.addEventListener('click', () => openModal(button.dataset.modalOpen));
+    });
+
+    document.querySelectorAll('[data-modal-close]').forEach((button) => {
+      button.addEventListener('click', () => closeModal(button.closest('.modal-backdrop')));
+    });
+
+    document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
+      backdrop.addEventListener('click', (event) => {
+        if (event.target === backdrop) closeModal(backdrop);
+      });
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        document.querySelectorAll('.modal-backdrop.open').forEach(closeModal);
+      }
+    });
+  </script>
 </body>
 </html>
