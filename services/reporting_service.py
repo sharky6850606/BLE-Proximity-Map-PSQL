@@ -171,7 +171,7 @@ def _fetch_notifications(conn, where_clause: str, params: tuple):
     return conn.execute(query, params).fetchall()
 
 
-def generate_activity_report(beacon_id: str, start_date: str | None = None, end_date: str | None = None):
+def generate_activity_report(beacon_id: str, start_date: str | None = None, end_date: str | None = None, device_idents=None, customer_id=None):
     """Activity report.
 
     - Show the selected beacon's events for the date range.
@@ -187,8 +187,18 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     conn = get_db()
     try:
         ph = _db_ph(conn)
+        params = [beacon_id, start_ts, end_ts]
         where = f"WHERE beacon_id = {ph} AND event_time >= {ph} AND event_time <= {ph}"
-        rows = _fetch_notifications(conn, where, (beacon_id, start_ts, end_ts))
+        if device_idents is not None:
+            if not device_idents:
+                rows = []
+            else:
+                placeholders = ",".join([ph] * len(device_idents))
+                where += f" AND n.device_ident IN ({placeholders})"
+                params.extend(sorted(device_idents))
+                rows = _fetch_notifications(conn, where, tuple(params))
+        else:
+            rows = _fetch_notifications(conn, where, tuple(params))
     finally:
         conn.close()
 
@@ -248,8 +258,8 @@ def generate_activity_report(beacon_id: str, start_date: str | None = None, end_
     try:
         ph = _db_ph(conn)
         conn.execute(
-            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES ({ph},{ph},{ph},{ph})",
-            (beacon_display, created_at, summary, pdf_path),
+            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path, customer_id) VALUES ({ph},{ph},{ph},{ph},{ph})",
+            (beacon_display, created_at, summary, pdf_path, customer_id),
         )
         conn.commit()
     finally:
@@ -294,11 +304,17 @@ def _format_event_time(value):
 def _daily_loop():
     while True:
         try:
+            from services.audit_service import run_daily_audits, _audit_schedule_for_day, _local_dt_from_unix
+
             label = format_samoa_time(time.time())
-            hour = int(label[11:13])
-            minute = int(label[14:16])
-            if hour == 22 and minute == 0:
-                generate_daily_report()
+            now_local = _local_dt_from_unix()
+            scheduled, _start, audit_end = _audit_schedule_for_day(now_local)
+            run_key = scheduled.strftime("%Y-%m-%d")
+            if not hasattr(_daily_loop, "last_run_key"):
+                _daily_loop.last_run_key = None
+            if now_local >= audit_end and _daily_loop.last_run_key != run_key:
+                run_daily_audits(scheduled_local_dt=scheduled)
+                _daily_loop.last_run_key = run_key
                 time.sleep(60)
             time.sleep(30)
         except Exception:
@@ -311,7 +327,7 @@ def start_daily_thread():
     return t
 
 
-def generate_device_activity_report(device_ident: str, start_date=None, end_date=None):
+def generate_device_activity_report(device_ident: str, start_date=None, end_date=None, customer_id=None):
     """Generate a device activity PDF from notifications history (filtered by device_ident)."""
     if not device_ident:
         return None
@@ -406,8 +422,8 @@ def generate_device_activity_report(device_ident: str, start_date=None, end_date
     try:
         ph = _db_ph(conn)
         conn.execute(
-            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path) VALUES ({ph},{ph},{ph},{ph})",
-            (f"[Device] {device_ident}", created_at, summary, pdf_path),
+            f"INSERT INTO activity_reports (beacon_name, created_at, summary, pdf_path, customer_id) VALUES ({ph},{ph},{ph},{ph},{ph})",
+            (f"[Device] {device_ident}", created_at, summary, pdf_path, customer_id),
         )
         conn.commit()
     finally:

@@ -23,3 +23,19 @@ PATH_LOSS_N = float(os.getenv("PATH_LOSS_N", "2.0"))
 # =============================
 REPORTS_DIR = os.getenv("REPORTS_DIR", "reports")
 ACTIVITY_REPORTS_DIR = os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports")
+AUDIT_REPORTS_DIR = os.getenv("AUDIT_REPORTS_DIR", "audit_reports")
+
+# =============================
+# Daily equipment audit
+# =============================
+AUDIT_HOUR = int(os.getenv("AUDIT_HOUR", "18"))  # 6 PM Samoa time
+AUDIT_MINUTE = int(os.getenv("AUDIT_MINUTE", "0"))
+AUDIT_WINDOW_BEFORE_MIN = int(os.getenv("AUDIT_WINDOW_BEFORE_MIN", "15"))
+AUDIT_WINDOW_AFTER_MIN = int(os.getenv("AUDIT_WINDOW_AFTER_MIN", "15"))
+
+# =============================
+# Email
+# =============================
+MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "").strip().lower()
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
+MAIL_FROM = os.getenv("MAIL_FROM", "").strip()

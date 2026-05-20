@@ -6,20 +6,26 @@ import json
 
 
 from database import init_db, get_db
-from routes import map_bp, flespi_bp
+from routes import map_bp, flespi_bp, admin_bp
 from services.beacon_logic import format_samoa_time
 from services.reporting_service import start_daily_thread, generate_daily_report, generate_activity_report
 from services.evaluator_service import start_evaluator_thread
+from services.auth_service import auth_bp, login_required, admin_required, is_admin, current_user, device_scope_clause, can_access_device, allowed_device_idents
+from config import AUDIT_REPORTS_DIR
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "dev-change-me")
 
 init_db()
 
+app.register_blueprint(auth_bp)
 app.register_blueprint(map_bp)
 app.register_blueprint(flespi_bp)
+app.register_blueprint(admin_bp)
 
 os.makedirs(os.path.abspath(os.getenv("REPORTS_DIR", "reports")), exist_ok=True)
 os.makedirs(os.path.abspath(os.getenv("ACTIVITY_REPORTS_DIR", "activity_reports")), exist_ok=True)
+os.makedirs(os.path.abspath(AUDIT_REPORTS_DIR), exist_ok=True)
 
 def _threads_enabled_for_runtime() -> bool:
     """Allow background workers in normal runtime but keep tests deterministic."""
@@ -44,13 +50,14 @@ def samoa_iso_now():
 
 
 @app.route("/api/notifications", methods=["POST"])
+@login_required
 def save_notification():
     data = request.get_json(silent=True) or {}
     ntype = (data.get("type") or "").strip().lower()
     name = (data.get("name") or "").strip()
     event_time = (data.get("time") or "").strip()
     beacon_id = (data.get("beacon_id") or data.get("beacon") or "").strip() or None
-    device_ident = (data.get("device") or "").strip() or None
+    device_ident = (data.get("device_ident") or data.get("device") or "").strip() or None
     distance = data.get("distance")
 
     if not ntype or not name:
@@ -58,6 +65,8 @@ def save_notification():
 
     conn = get_db()
     try:
+        if device_ident and not can_access_device(device_ident, conn=conn):
+            return jsonify({"error": "forbidden"}), 403
         ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
         conn.execute(
             f"INSERT INTO notifications (type, beacon_name, beacon_id, event_time, created_at, device_ident, distance) "
@@ -73,6 +82,7 @@ def save_notification():
 
 
 @app.route("/api/notifications/recent")
+@login_required
 def recent_notifications():
     """Return notifications newer than since_id (for live popups / panel)."""
     since_id = request.args.get("since_id", "0")
@@ -85,10 +95,12 @@ def recent_notifications():
     try:
         cur = conn.cursor()
         ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        scope_sql, scope_params = device_scope_clause(conn, "n.device_ident")
+        customer_id = (current_user() or {}).get("customer_id")
         cur.execute(
             """SELECT n.id,
                       n.type,
-                      COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
+                      COALESCE(cbn.name, bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
                       n.beacon_id,
                       n.event_time,
                       n.device_ident,
@@ -97,10 +109,13 @@ def recent_notifications():
                  FROM notifications n
             LEFT JOIN beacon_names bn
                    ON n.beacon_id = bn.id
+            LEFT JOIN customer_beacon_names cbn
+                   ON n.beacon_id = cbn.beacon_id AND cbn.customer_id = {customer_ph}
                 WHERE n.id > {ph}
+                  AND {scope_sql}
                 ORDER BY n.id ASC
-                LIMIT 200""".format(ph=ph),
-            (since_id_int,),
+                LIMIT 200""".format(customer_ph=ph, ph=ph, scope_sql=scope_sql),
+            (customer_id, since_id_int) + scope_params,
         )
         rows = cur.fetchall()
     finally:
@@ -121,6 +136,7 @@ def recent_notifications():
     return jsonify({"items": items})
 
 @app.route("/reports/history")
+@admin_required
 def reports_history():
     conn = get_db()
     try:
@@ -131,6 +147,7 @@ def reports_history():
 
 
 @app.route("/download_daily_report/<int:report_id>")
+@admin_required
 def download_daily_report(report_id: int):
     conn = get_db()
     try:
@@ -144,21 +161,28 @@ def download_daily_report(report_id: int):
 
 
 @app.route("/notifications/history")
+@login_required
 def notifications_history():
     conn = get_db()
     try:
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        scope_sql, scope_params = device_scope_clause(conn, "n.device_ident")
         notifications = conn.execute(
             """SELECT n.created_at,
                       n.type,
-                      COALESCE(bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
+                      COALESCE(cbn.name, bn.name, n.beacon_name, n.beacon_id) AS beacon_display_name,
                       n.event_time,
                       n.distance,
                       n.device_ident
                  FROM notifications n
             LEFT JOIN beacon_names bn
                    ON n.beacon_id = bn.id
+            LEFT JOIN customer_beacon_names cbn
+                   ON n.beacon_id = cbn.beacon_id AND cbn.customer_id = {customer_ph}
+                WHERE {scope_sql}
                 ORDER BY n.id DESC
-                LIMIT 500"""
+                LIMIT 500""".format(customer_ph=ph, scope_sql=scope_sql),
+            ((current_user() or {}).get("customer_id"),) + scope_params,
         ).fetchall()
     finally:
         conn.close()
@@ -166,11 +190,18 @@ def notifications_history():
 
 
 @app.route("/download_activity_report/<int:report_id>")
+@login_required
 def download_activity_report(report_id: int):
     conn = get_db()
     try:
         ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
-        row = conn.execute(f"SELECT pdf_path FROM activity_reports WHERE id={ph}", (report_id,)).fetchone()
+        if is_admin():
+            row = conn.execute(f"SELECT pdf_path FROM activity_reports WHERE id={ph}", (report_id,)).fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT pdf_path FROM activity_reports WHERE id={ph} AND customer_id={ph}",
+                (report_id, (current_user() or {}).get("customer_id")),
+            ).fetchone()
     finally:
         conn.close()
     if not row or not row[0] or not os.path.exists(row[0]):
@@ -179,6 +210,7 @@ def download_activity_report(report_id: int):
 
 
 @app.route("/activity-reports", methods=["GET","POST"])
+@login_required
 def activity_reports_page():
     beacons = []
     devices = []
@@ -186,9 +218,34 @@ def activity_reports_page():
 
     conn = get_db()
     try:
-        beacons_rows = conn.execute("SELECT id, name FROM beacon_names ORDER BY id").fetchall()
-        devices_rows = conn.execute("SELECT id, name, color FROM devices ORDER BY id").fetchall()
-        reports = conn.execute("SELECT id, beacon_name, created_at, summary, pdf_path FROM activity_reports ORDER BY id DESC LIMIT 200").fetchall()
+        user = current_user()
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        scope_sql, scope_params = device_scope_clause(conn, "bs.device_ident", user=user)
+        beacons_rows = conn.execute(
+            "SELECT DISTINCT bs.beacon_id, COALESCE(cbn.name, bn.name, bs.beacon_id) AS name "
+            "FROM beacon_states bs "
+            "LEFT JOIN beacon_names bn ON bn.id = bs.beacon_id "
+            f"LEFT JOIN customer_beacon_names cbn ON cbn.beacon_id = bs.beacon_id AND cbn.customer_id = {ph} "
+            f"WHERE bs.beacon_id IS NOT NULL AND {scope_sql} ORDER BY bs.beacon_id",
+            (user.get("customer_id"),) + scope_params,
+        ).fetchall()
+        dscope_sql, dscope_params = device_scope_clause(conn, "ds.device_ident", user=user)
+        devices_rows = conn.execute(
+            "SELECT ds.device_ident, COALESCE(cds.name, cd.label, d.name, ds.device_ident) AS name, COALESCE(cds.color, d.color) AS color "
+            "FROM device_states ds "
+            "LEFT JOIN devices d ON d.id = ds.device_ident "
+            f"LEFT JOIN customer_devices cd ON cd.device_ident = ds.device_ident AND cd.customer_id = {ph} "
+            f"LEFT JOIN customer_device_settings cds ON cds.device_ident = ds.device_ident AND cds.customer_id = {ph} "
+            f"WHERE {dscope_sql} ORDER BY ds.device_ident",
+            (user.get("customer_id"), user.get("customer_id")) + dscope_params,
+        ).fetchall()
+        if is_admin(user):
+            reports = conn.execute("SELECT id, beacon_name, created_at, summary, pdf_path FROM activity_reports ORDER BY id DESC LIMIT 200").fetchall()
+        else:
+            reports = conn.execute(
+                f"SELECT id, beacon_name, created_at, summary, pdf_path FROM activity_reports WHERE customer_id={ph} ORDER BY id DESC LIMIT 200",
+                (user.get("customer_id"),),
+            ).fetchall()
 
         # Templates expect {ident, label} dictionaries
         for r in beacons_rows:
@@ -213,15 +270,27 @@ def activity_reports_page():
 
         if report_kind == "device":
             device_ident = (request.form.get("device") or request.form.get("device_ident") or "").strip()
-            if not device_ident:
+            if not device_ident or not can_access_device(device_ident):
                 return redirect(url_for("activity_reports_page"))
             from services.reporting_service import generate_device_activity_report
-            pdf_path = generate_device_activity_report(device_ident, start_date=start_date, end_date=end_date)
+            pdf_path = generate_device_activity_report(
+                device_ident,
+                start_date=start_date,
+                end_date=end_date,
+                customer_id=None if is_admin() else (current_user() or {}).get("customer_id"),
+            )
         else:
             beacon_key = (request.form.get("beacon") or request.form.get("beacon_id") or "").strip()
             if not beacon_key:
                 return redirect(url_for("activity_reports_page"))
-            pdf_path = generate_activity_report(beacon_key, start_date=start_date, end_date=end_date)
+            allowed_devices = None if is_admin() else allowed_device_idents()
+            pdf_path = generate_activity_report(
+                beacon_key,
+                start_date=start_date,
+                end_date=end_date,
+                device_idents=allowed_devices,
+                customer_id=None if is_admin() else (current_user() or {}).get("customer_id"),
+            )
 
         if not pdf_path:
             return redirect(url_for("activity_reports_page"))
@@ -232,6 +301,7 @@ def activity_reports_page():
 
 
 @app.route("/download/latest-report")
+@admin_required
 def download_latest_report():
     conn = get_db()
     try:
@@ -245,13 +315,58 @@ def download_latest_report():
 
 
 @app.route("/reports/generate-now")
+@admin_required
 def generate_report_now():
     pdf_path = generate_daily_report()
     return send_file(pdf_path, as_attachment=True)
 
 
+@app.route("/audit-reports")
+@login_required
+def audit_reports_page():
+    conn = get_db()
+    try:
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        if is_admin():
+            reports = conn.execute(
+                "SELECT ar.id, c.name, ar.scheduled_for, ar.scan_window_start, ar.scan_window_end, ar.status, ar.emailed_at "
+                "FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id ORDER BY ar.id DESC LIMIT 200"
+            ).fetchall()
+        else:
+            reports = conn.execute(
+                f"SELECT ar.id, c.name, ar.scheduled_for, ar.scan_window_start, ar.scan_window_end, ar.status, ar.emailed_at "
+                f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
+                f"WHERE ar.customer_id = {ph} ORDER BY ar.id DESC LIMIT 200",
+                ((current_user() or {}).get("customer_id"),),
+            ).fetchall()
+    finally:
+        conn.close()
+    return render_template("audit_reports.html", reports=reports)
+
+
+@app.route("/download_audit_report/<int:audit_id>")
+@login_required
+def download_audit_report(audit_id: int):
+    conn = get_db()
+    try:
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        if is_admin():
+            row = conn.execute(f"SELECT pdf_path FROM audit_runs WHERE id={ph}", (audit_id,)).fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT pdf_path FROM audit_runs WHERE id={ph} AND customer_id={ph}",
+                (audit_id, (current_user() or {}).get("customer_id")),
+            ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0] or not os.path.exists(row[0]):
+        abort(404)
+    return send_file(row[0], as_attachment=True)
+
+
 
 @app.route("/uptime")
+@admin_required
 def uptime_page():
     conn = get_db()
     try:
@@ -267,6 +382,7 @@ def uptime_page():
 
 
 @app.route("/analytics")
+@login_required
 def analytics_page():
     """Render the full analytics dashboard template (the old UI expects many vars)."""
 
@@ -321,6 +437,11 @@ def analytics_page():
     conn = get_db()
     try:
         ph = _ph(conn)
+        user = current_user()
+        device_scope_sql, device_scope_params = device_scope_clause(conn, "device_ident", user=user)
+        bs_scope_sql, bs_scope_params = device_scope_clause(conn, "device_ident", user=user)
+        notif_plain_scope_sql, notif_plain_scope_params = device_scope_clause(conn, "device_ident", user=user)
+        notif_scope_sql, notif_scope_params = device_scope_clause(conn, "n.device_ident", user=user)
         now_ts = time.time()
         # Analytics window resets daily at 12:00 AM (midnight) Samoa time.
         now_local_dt = datetime.utcfromtimestamp(now_ts) + timedelta(hours=13)
@@ -374,11 +495,12 @@ def analytics_page():
         # -------- DEVICE / BEACON LIVE COUNTS --------
         try:
             payload["devices_online"] = int(conn.execute(
-                f"SELECT COUNT(*) FROM device_states WHERE online = {ph}",
-                (1,),
+                f"SELECT COUNT(*) FROM device_states WHERE online = {ph} AND {device_scope_sql}",
+                (1,) + device_scope_params,
             ).fetchone()[0])
             payload["devices_total"] = int(conn.execute(
-                "SELECT COUNT(*) FROM device_states",
+                f"SELECT COUNT(*) FROM device_states WHERE {device_scope_sql}",
+                device_scope_params,
             ).fetchone()[0])
         except Exception:
             payload["devices_online"] = 0
@@ -387,11 +509,13 @@ def analytics_page():
         try:
             if getattr(conn, "backend", "postgres") == "postgres":
                 srows = conn.execute(
-                    "SELECT state, missing, COUNT(*) FROM beacon_states GROUP BY state, missing"
+                    f"SELECT state, missing, COUNT(*) FROM beacon_states WHERE {bs_scope_sql} GROUP BY state, missing",
+                    bs_scope_params,
                 ).fetchall()
             else:
                 srows = conn.execute(
-                    "SELECT state, missing, COUNT(*) FROM beacon_states GROUP BY state, missing"
+                    f"SELECT state, missing, COUNT(*) FROM beacon_states WHERE {bs_scope_sql} GROUP BY state, missing",
+                    bs_scope_params,
                 ).fetchall()
         except Exception:
             srows = []
@@ -427,16 +551,18 @@ def analytics_page():
                     "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, lower(type) AS event_type, COUNT(*) "
                     "FROM notifications WHERE created_at::timestamp >= %s "
                     "AND lower(type) IN ('in','left','still_in','still_out') "
+                    f"AND {notif_plain_scope_sql} "
                     "GROUP BY hr, event_type ORDER BY hr",
-                    (window_start,),
+                    (window_start,) + notif_plain_scope_params,
                 ).fetchall()
             else:
                 erows = conn.execute(
                     "SELECT substr(created_at, 1, 13) || ':00' AS hr, lower(type) AS event_type, COUNT(*) "
                     "FROM notifications WHERE created_at >= ? "
                     "AND lower(type) IN ('in','left','still_in','still_out') "
+                    f"AND {notif_plain_scope_sql} "
                     "GROUP BY hr, event_type ORDER BY hr",
-                    (window_start,),
+                    (window_start,) + notif_plain_scope_params,
                 ).fetchall()
         except Exception:
             erows = []
@@ -461,8 +587,9 @@ def analytics_page():
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at::timestamp >= %s "
                     "AND lower(n.type) IN ('in','left','still_in','still_out') "
+                    f"AND {notif_scope_sql} "
                     "GROUP BY name, event_type",
-                    (window_start,),
+                    (window_start,) + notif_scope_params,
                 ).fetchall()
             else:
                 trows = conn.execute(
@@ -471,8 +598,9 @@ def analytics_page():
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at >= ? "
                     "AND lower(n.type) IN ('in','left','still_in','still_out') "
+                    f"AND {notif_scope_sql} "
                     "GROUP BY name, event_type",
-                    (window_start,),
+                    (window_start,) + notif_scope_params,
                 ).fetchall()
         except Exception:
             trows = []
@@ -528,8 +656,8 @@ def analytics_page():
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at::timestamp >= %s "
-                    "AND lower(n.type) IN ('in','left','still_in','still_out') ORDER BY n.event_time",
-                    (window_start,),
+                    f"AND lower(n.type) IN ('in','left','still_in','still_out') AND {notif_scope_sql} ORDER BY n.event_time",
+                    (window_start,) + notif_scope_params,
                 ).fetchall()
             else:
                 prow = conn.execute(
@@ -537,8 +665,8 @@ def analytics_page():
                     "FROM notifications n "
                     "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
                     "WHERE n.created_at >= ? "
-                    "AND lower(n.type) IN ('in','left','still_in','still_out') ORDER BY n.event_time",
-                    (window_start,),
+                    f"AND lower(n.type) IN ('in','left','still_in','still_out') AND {notif_scope_sql} ORDER BY n.event_time",
+                    (window_start,) + notif_scope_params,
                 ).fetchall()
         except Exception:
             prow = []
@@ -620,6 +748,7 @@ def healthz():
     return {"ok": True}
 
 @app.route("/api/rename-beacon", methods=["POST"])
+@login_required
 def api_rename_beacon():
     data = request.get_json(force=True)
 
@@ -631,15 +760,21 @@ def api_rename_beacon():
 
     conn = get_db()
     try:
-        conn.execute(
-            """
-            INSERT INTO beacon_names (id, name)
-            VALUES (%s, %s)
-            ON CONFLICT (id)
-            DO UPDATE SET name = EXCLUDED.name
-            """,
-            (beacon_id, name),
-        )
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        user = current_user()
+        if is_admin(user):
+            conn.execute(
+                f"INSERT INTO beacon_names (id, name) VALUES ({ph}, {ph}) "
+                "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+                (beacon_id, name),
+            )
+        else:
+            conn.execute(
+                f"INSERT INTO customer_beacon_names (customer_id, beacon_id, name, updated_at) "
+                f"VALUES ({ph},{ph},{ph},{ph}) "
+                "ON CONFLICT(customer_id, beacon_id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
+                (user.get("customer_id"), beacon_id, name, samoa_iso_now()),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -647,6 +782,7 @@ def api_rename_beacon():
     return jsonify({"status": "ok"})
 
 @app.route("/api/rename-device", methods=["POST"])
+@login_required
 def api_rename_device():
     data = request.get_json(force=True)
 
@@ -659,17 +795,24 @@ def api_rename_device():
 
     conn = get_db()
     try:
-        conn.execute(
-            """
-            INSERT INTO devices (id, name, color)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (id)
-            DO UPDATE SET
-                name = EXCLUDED.name,
-                color = EXCLUDED.color
-            """,
-            (device_id, name, color),
-        )
+        ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+        user = current_user()
+        if not can_access_device(device_id, conn=conn, user=user):
+            return jsonify({"error": "forbidden"}), 403
+        if is_admin(user):
+            conn.execute(
+                f"INSERT INTO devices (id, name, color) VALUES ({ph}, {ph}, {ph}) "
+                "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, color = EXCLUDED.color",
+                (device_id, name, color),
+            )
+        else:
+            conn.execute(
+                f"INSERT INTO customer_device_settings (customer_id, device_ident, name, color, updated_at) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph}) "
+                "ON CONFLICT(customer_id, device_ident) DO UPDATE SET "
+                "name=excluded.name, color=excluded.color, updated_at=excluded.updated_at",
+                (user.get("customer_id"), device_id, name, color, samoa_iso_now()),
+            )
         conn.commit()
     finally:
         conn.close()

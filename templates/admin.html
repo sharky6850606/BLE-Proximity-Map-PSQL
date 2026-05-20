@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin - BLE Proximity Map</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <style>
+    body { background:#020617; color:#e5e7eb; padding:18px; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:#60a5fa; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    h1 { margin:0; font-size:1.4rem; }
+    h2 { font-size:1rem; margin:0 0 10px 0; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; }
+    .card { background:#111827; border:1px solid rgba(75,85,99,0.9); border-radius:8px; padding:14px; }
+    label { display:block; margin-top:8px; font-size:0.8rem; color:#cbd5e1; }
+    input, select { width:100%; box-sizing:border-box; margin-top:4px; padding:8px; border-radius:6px; border:1px solid #4b5563; background:#020617; color:#f9fafb; }
+    button { margin-top:10px; padding:8px 10px; border:none; border-radius:6px; background:#2563eb; color:#fff; cursor:pointer; }
+    .danger { background:#991b1b; }
+    .muted { color:#9ca3af; font-size:0.82rem; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.84rem; }
+    th, td { padding:7px 8px; border-bottom:1px solid rgba(148,163,184,0.25); text-align:left; vertical-align:top; }
+    th { color:#cbd5e1; }
+    .inline-form { display:inline; }
+    .inline-form button { margin:0; padding:4px 7px; font-size:0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Admin Console</h1>
+      <div class="muted">Manage customers, users, device access, and active beacon visibility.</div>
+    </div>
+    <div><a href="{{ url_for('map.map_page') }}">Map</a> &nbsp; <a href="{{ url_for('auth.logout') }}">Logout</a></div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Create Customer</h2>
+      <form method="post" action="{{ url_for('admin.create_customer') }}">
+        <label>Name</label>
+        <input name="name" required />
+        <label>Slug</label>
+        <input name="slug" placeholder="optional" />
+        <button type="submit">Create customer</button>
+      </form>
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for c in customers %}
+          <tr>
+            <td>{{ c[1] }}<div class="muted">{{ c[2] }}</div></td>
+            <td>{{ "Active" if c[3] else "Suspended" }}</td>
+            <td>
+              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_customer', customer_id=c[0]) }}">
+                <button class="{{ 'danger' if c[3] else '' }}" type="submit">{{ "Suspend" if c[3] else "Reactivate" }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Create User</h2>
+      <form method="post" action="{{ url_for('admin.create_user') }}">
+        <label>Customer</label>
+        <select name="customer_id">
+          <option value="">Internal admin</option>
+          {% for c in customers if c[3] %}
+          <option value="{{ c[0] }}">{{ c[1] }}</option>
+          {% endfor %}
+        </select>
+        <label>Role</label>
+        <select name="role">
+          <option value="customer_user">Customer user</option>
+          <option value="customer_admin">Customer admin</option>
+          <option value="admin">Internal admin</option>
+        </select>
+        <label>Email</label>
+        <input name="email" type="email" required />
+        <label>Temporary password</label>
+        <input name="password" type="text" required />
+        <button type="submit">Create user</button>
+      </form>
+      <table>
+        <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u[1] }}<div class="muted">{{ u[4] or "Internal" }}{% if u[5] %} · Last login {{ u[5] }}{% endif %}</div></td>
+            <td>{{ u[2] }}</td>
+            <td>{{ "Active" if u[3] else "Suspended" }}</td>
+            <td>
+              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_user', user_id=u[0]) }}">
+                <button class="{{ 'danger' if u[3] else '' }}" type="submit">{{ "Suspend" if u[3] else "Reactivate" }}</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.reset_user_password', user_id=u[0]) }}">
+                <input name="password" placeholder="new password" />
+                <button type="submit">Reset</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Assign Device</h2>
+      <form method="post" action="{{ url_for('admin.assign_device') }}">
+        <label>Customer</label>
+        <select name="customer_id" required>
+          {% for c in customers if c[3] %}
+          <option value="{{ c[0] }}">{{ c[1] }}</option>
+          {% endfor %}
+        </select>
+        <label>Device IMEI / ident</label>
+        <input name="device_ident" placeholder="863719068581413" required />
+        <label>Label</label>
+        <input name="label" placeholder="optional" />
+        <button type="submit">Assign device</button>
+      </form>
+      <table>
+        <thead><tr><th>Customer</th><th>Device</th><th></th></tr></thead>
+        <tbody>
+          {% for d in devices %}
+          <tr>
+            <td>{{ d[1] }}</td>
+            <td>{{ d[2] }}<div class="muted">{{ d[3] }}</div></td>
+            <td>
+              <form class="inline-form" method="post" action="{{ url_for('admin.remove_device', assignment_id=d[0]) }}">
+                <button class="danger" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Active Devices</h2>
+      <table>
+        <thead><tr><th>Device</th><th>Online</th><th>Last seen</th><th>Location</th></tr></thead>
+        <tbody>
+          {% for d in active_devices %}
+          <tr>
+            <td>{{ d[0] }}</td>
+            <td>{{ "Yes" if d[1] else "No" }}</td>
+            <td>{{ d[2] }}</td>
+            <td>{{ d[3] }}, {{ d[4] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <div class="grid" style="margin-top:14px;">
+    <section class="card">
+      <h2>Expected Assets</h2>
+      <form method="post" action="{{ url_for('admin.create_asset') }}">
+        <label>Customer</label>
+        <select name="customer_id" required>
+          {% for c in customers if c[3] %}
+          <option value="{{ c[0] }}">{{ c[1] }}</option>
+          {% endfor %}
+        </select>
+        <label>Beacon ID</label>
+        <input name="beacon_id" placeholder="FF3B1F8D-F0C8-55AA-AAE6-C9379B730055" required />
+        <label>Asset name</label>
+        <input name="name" placeholder="Excavator, generator, compressor..." />
+        <label>Expected device IMEI / ident</label>
+        <input name="expected_device_ident" placeholder="optional; blank means any assigned device" />
+        <button type="submit">Save expected asset</button>
+      </form>
+      <table>
+        <thead><tr><th>Customer</th><th>Asset</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for a in assets %}
+          <tr>
+            <td>{{ a[1] }}</td>
+            <td>{{ a[3] }}<div class="muted">{{ a[2] }}{% if a[4] %} · expected on {{ a[4] }}{% endif %}</div></td>
+            <td>{{ a[6] or "unknown" }}{% if a[7] %}<div class="muted">Missing since {{ a[7] }}</div>{% endif %}{% if a[8] %}<div class="muted">Found {{ a[8] }}</div>{% endif %}</td>
+            <td>
+              <form class="inline-form" method="post" action="{{ url_for('admin.toggle_asset', asset_id=a[0]) }}">
+                <button class="{{ 'danger' if a[5] else '' }}" type="submit">{{ "Deactivate" if a[5] else "Reactivate" }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Daily Audits</h2>
+      <form method="post" action="{{ url_for('admin.run_audit_now') }}">
+        <label>Run audit for customer now</label>
+        <select name="customer_id" required>
+          {% for c in customers if c[3] %}
+          <option value="{{ c[0] }}">{{ c[1] }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Run audit</button>
+      </form>
+      <table>
+        <thead><tr><th>Customer</th><th>Scheduled</th><th>Status</th><th>Email</th></tr></thead>
+        <tbody>
+          {% for a in audits %}
+          <tr>
+            <td>{{ a[1] }}</td>
+            <td>{{ a[2] }}<div class="muted">{{ a[3] }} to {{ a[4] }}</div>{% if a[6] %}<div><a href="{{ url_for('download_audit_report', audit_id=a[0]) }}">Download</a></div>{% endif %}</td>
+            <td>{{ a[5] }}</td>
+            <td>{{ a[7] or "not sent" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:14px;">
+    <h2>Recent Active Beacons</h2>
+    <table>
+      <thead><tr><th>Beacon</th><th>Device</th><th>Last seen</th><th>Distance</th><th>RSSI</th><th>Missing</th></tr></thead>
+      <tbody>
+        {% for b in active_beacons %}
+        <tr>
+          <td>{{ b[0] }}</td>
+          <td>{{ b[1] }}</td>
+          <td>{{ b[2] }}</td>
+          <td>{{ b[3] }}</td>
+          <td>{{ b[4] }}</td>
+          <td>{{ "Yes" if b[5] else "No" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</body>
+</html>

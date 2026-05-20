@@ -22,7 +22,30 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT",
+    "ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS customer_id BIGINT",
 ]
+
+
+def _seed_default_admin(conn, cur):
+    """Create the first admin from env vars when no admin exists."""
+    import os
+    from werkzeug.security import generate_password_hash
+
+    email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("ADMIN_PASSWORD", "").strip()
+    if not email or not password:
+        return
+
+    ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
+    row = cur.execute(f"SELECT COUNT(*) FROM app_users WHERE role = {ph}", ("admin",)).fetchone()
+    if row and int(row[0] or 0) > 0:
+        return
+
+    password_hash = generate_password_hash(password)
+    cur.execute(
+        f"INSERT INTO app_users (email, password_hash, role, active, created_at) VALUES ({ph},{ph},{ph},{ph},{ph})",
+        (email, password_hash, "admin", 1, "seeded"),
+    )
 
 
 def get_db():
@@ -146,11 +169,130 @@ def init_db():
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS created_at TEXT")
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS summary TEXT")
             cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS pdf_path TEXT")
+            cur.execute("ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS customer_id BIGINT")
+
+            # SaaS tenancy / auth
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    slug TEXT UNIQUE,
+                    active INTEGER DEFAULT 1,
+                    created_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'customer_user',
+                    active INTEGER DEFAULT 1,
+                    force_password_reset INTEGER DEFAULT 0,
+                    last_login_at TEXT,
+                    created_at TEXT,
+                    deleted_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customer_devices (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    device_ident TEXT NOT NULL,
+                    label TEXT,
+                    created_at TEXT,
+                    UNIQUE(customer_id, device_ident)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customer_beacon_names (
+                    customer_id BIGINT REFERENCES customers(id),
+                    beacon_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    updated_at TEXT,
+                    PRIMARY KEY (customer_id, beacon_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customer_device_settings (
+                    customer_id BIGINT REFERENCES customers(id),
+                    device_ident TEXT NOT NULL,
+                    name TEXT,
+                    color TEXT,
+                    updated_at TEXT,
+                    PRIMARY KEY (customer_id, device_ident)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_devices_device ON customer_devices(device_ident)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_device_ident ON notifications(device_ident)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_states_device_ident ON beacon_states(device_ident)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS customer_assets (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    beacon_id TEXT NOT NULL,
+                    name TEXT,
+                    expected_device_ident TEXT,
+                    active INTEGER DEFAULT 1,
+                    status TEXT DEFAULT 'unknown',
+                    missing_since TEXT,
+                    found_at TEXT,
+                    last_seen_ts BIGINT,
+                    last_seen_device_ident TEXT,
+                    created_at TEXT,
+                    UNIQUE(customer_id, beacon_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS beacon_observations (
+                    id BIGSERIAL PRIMARY KEY,
+                    observed_ts BIGINT,
+                    device_ident TEXT,
+                    beacon_id TEXT,
+                    distance DOUBLE PRECISION,
+                    rssi DOUBLE PRECISION,
+                    created_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_runs (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    scheduled_for TEXT,
+                    scan_window_start TEXT,
+                    scan_window_end TEXT,
+                    status TEXT,
+                    pdf_path TEXT,
+                    emailed_at TEXT,
+                    created_at TEXT,
+                    UNIQUE(customer_id, scheduled_for)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_results (
+                    id BIGSERIAL PRIMARY KEY,
+                    audit_run_id BIGINT REFERENCES audit_runs(id),
+                    asset_id BIGINT REFERENCES customer_assets(id),
+                    beacon_id TEXT,
+                    status TEXT,
+                    last_seen_ts BIGINT,
+                    last_seen_device_ident TEXT,
+                    last_distance DOUBLE PRECISION,
+                    last_rssi DOUBLE PRECISION
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
 
             # Postgres-specific migrations for existing DBs (ignore errors if columns already exist)
             for stmt in POSTGRES_MIGRATIONS:
                 cur.execute(stmt)
 
+            _seed_default_admin(conn, cur)
             conn.commit()
             print("[init_db] postgres schema ready ✅")
             return
@@ -238,6 +380,120 @@ def init_db():
                 pdf_path TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'customer_user',
+                active INTEGER DEFAULT 1,
+                force_password_reset INTEGER DEFAULT 0,
+                last_login_at TEXT,
+                created_at TEXT,
+                deleted_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customer_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                device_ident TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT,
+                UNIQUE(customer_id, device_ident)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customer_beacon_names (
+                customer_id INTEGER REFERENCES customers(id),
+                beacon_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                updated_at TEXT,
+                PRIMARY KEY (customer_id, beacon_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customer_device_settings (
+                customer_id INTEGER REFERENCES customers(id),
+                device_ident TEXT NOT NULL,
+                name TEXT,
+                color TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (customer_id, device_ident)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_devices_device ON customer_devices(device_ident)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_device_ident ON notifications(device_ident)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_states_device_ident ON beacon_states(device_ident)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customer_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                beacon_id TEXT NOT NULL,
+                name TEXT,
+                expected_device_ident TEXT,
+                active INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'unknown',
+                missing_since TEXT,
+                found_at TEXT,
+                last_seen_ts INTEGER,
+                last_seen_device_ident TEXT,
+                created_at TEXT,
+                UNIQUE(customer_id, beacon_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS beacon_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_ts INTEGER,
+                device_ident TEXT,
+                beacon_id TEXT,
+                distance REAL,
+                rssi REAL,
+                created_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                scheduled_for TEXT,
+                scan_window_start TEXT,
+                scan_window_end TEXT,
+                status TEXT,
+                pdf_path TEXT,
+                emailed_at TEXT,
+                created_at TEXT,
+                UNIQUE(customer_id, scheduled_for)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_run_id INTEGER REFERENCES audit_runs(id),
+                asset_id INTEGER REFERENCES customer_assets(id),
+                beacon_id TEXT,
+                status TEXT,
+                last_seen_ts INTEGER,
+                last_seen_device_ident TEXT,
+                last_distance REAL,
+                last_rssi REAL
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
 
         # SQLite migrations for existing DBs
         cur.execute("PRAGMA table_info(device_states)")
@@ -248,7 +504,12 @@ def init_db():
             cur.execute("ALTER TABLE device_states ADD COLUMN last_lon REAL")
         if "last_payload_ts" not in existing_cols:
             cur.execute("ALTER TABLE device_states ADD COLUMN last_payload_ts INTEGER")
+        cur.execute("PRAGMA table_info(activity_reports)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "customer_id" not in existing_cols:
+            cur.execute("ALTER TABLE activity_reports ADD COLUMN customer_id INTEGER")
 
+        _seed_default_admin(conn, cur)
         conn.commit()
         print("[init_db] sqlite schema ready ✅")
     finally:
@@ -257,4 +518,3 @@ def init_db():
         except Exception:
             pass
         conn.close()
-
