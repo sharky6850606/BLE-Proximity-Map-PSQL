@@ -5,7 +5,8 @@ from datetime import timedelta
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from database import get_db
-from services.auth_service import admin_required, hash_password, normalize_email
+from services.auth_service import admin_required, current_user, hash_password, normalize_email
+from services.audit_log_service import log_event
 from config import AUDIT_WINDOW_AFTER_MIN
 from services.audit_service import run_customer_audit, _local_dt_from_unix
 from services.beacon_logic import format_samoa_time
@@ -65,6 +66,11 @@ def dashboard():
             "FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
             "ORDER BY ar.id DESC LIMIT 100"
         ).fetchall()
+        audit_logs = conn.execute(
+            "SELECT al.created_at, al.actor_email, al.actor_role, c.name, al.action, al.target_type, al.target_id, al.details, al.ip_address "
+            "FROM audit_logs al LEFT JOIN customers c ON c.id = al.customer_id "
+            "ORDER BY al.id DESC LIMIT 200"
+        ).fetchall()
     finally:
         conn.close()
     return render_template(
@@ -76,6 +82,7 @@ def dashboard():
         active_beacons=active_beacons,
         assets=assets,
         audits=audits,
+        audit_logs=audit_logs,
     )
 
 
@@ -93,6 +100,14 @@ def create_customer():
             f"INSERT INTO customers (name, slug, active, created_at) VALUES ({ph},{ph},{ph},{ph})",
             (name, slug, 1, _now_label()),
         )
+        log_event(
+            "admin.create_customer",
+            target_type="customer",
+            target_id=slug,
+            details=f"Created customer {name}",
+            actor_user=current_user(),
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -107,9 +122,19 @@ def toggle_customer(customer_id):
         ph = _ph(conn)
         row = conn.execute(f"SELECT active FROM customers WHERE id = {ph}", (customer_id,)).fetchone()
         if row:
+            new_active = 0 if row[0] else 1
             conn.execute(
                 f"UPDATE customers SET active = {ph} WHERE id = {ph}",
-                (0 if row[0] else 1, customer_id),
+                (new_active, customer_id),
+            )
+            log_event(
+                "admin.toggle_customer",
+                target_type="customer",
+                target_id=customer_id,
+                details=f"{'Reactivated' if new_active else 'Suspended'} customer",
+                actor_user=current_user(),
+                customer_id=customer_id,
+                conn=conn,
             )
             conn.commit()
     finally:
@@ -137,6 +162,15 @@ def create_user():
             f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
             (customer_id, email, hash_password(password), role, 1, _now_label()),
         )
+        log_event(
+            "admin.create_user",
+            target_type="user",
+            target_id=email,
+            details=f"Created {role} account {email}",
+            actor_user=current_user(),
+            customer_id=customer_id,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -149,11 +183,21 @@ def toggle_user(user_id):
     conn = get_db()
     try:
         ph = _ph(conn)
-        row = conn.execute(f"SELECT active FROM app_users WHERE id = {ph}", (user_id,)).fetchone()
+        row = conn.execute(f"SELECT active, customer_id, email FROM app_users WHERE id = {ph}", (user_id,)).fetchone()
         if row:
+            new_active = 0 if row[0] else 1
             conn.execute(
                 f"UPDATE app_users SET active = {ph} WHERE id = {ph}",
-                (0 if row[0] else 1, user_id),
+                (new_active, user_id),
+            )
+            log_event(
+                "admin.toggle_user",
+                target_type="user",
+                target_id=user_id,
+                details=f"{'Reactivated' if new_active else 'Suspended'} user {row[2]}",
+                actor_user=current_user(),
+                customer_id=row[1],
+                conn=conn,
             )
             conn.commit()
     finally:
@@ -170,9 +214,19 @@ def reset_user_password(user_id):
     conn = get_db()
     try:
         ph = _ph(conn)
+        row = conn.execute(f"SELECT customer_id, email FROM app_users WHERE id = {ph}", (user_id,)).fetchone()
         conn.execute(
             f"UPDATE app_users SET password_hash = {ph}, force_password_reset = 0 WHERE id = {ph}",
             (hash_password(password), user_id),
+        )
+        log_event(
+            "admin.reset_password",
+            target_type="user",
+            target_id=user_id,
+            details=f"Reset password for {row[1] if row else user_id}",
+            actor_user=current_user(),
+            customer_id=row[0] if row else None,
+            conn=conn,
         )
         conn.commit()
     finally:
@@ -197,6 +251,15 @@ def assign_device():
             "ON CONFLICT(customer_id, device_ident) DO UPDATE SET label=excluded.label",
             (customer_id, device_ident, label, _now_label()),
         )
+        log_event(
+            "admin.assign_device",
+            target_type="device",
+            target_id=device_ident,
+            details=f"Assigned device {device_ident}" + (f" as {label}" if label else ""),
+            actor_user=current_user(),
+            customer_id=customer_id,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -209,7 +272,20 @@ def remove_device(assignment_id):
     conn = get_db()
     try:
         ph = _ph(conn)
+        row = conn.execute(
+            f"SELECT customer_id, device_ident FROM customer_devices WHERE id = {ph}",
+            (assignment_id,),
+        ).fetchone()
         conn.execute(f"DELETE FROM customer_devices WHERE id = {ph}", (assignment_id,))
+        log_event(
+            "admin.remove_device",
+            target_type="device",
+            target_id=row[1] if row else assignment_id,
+            details=f"Removed device assignment {row[1] if row else assignment_id}",
+            actor_user=current_user(),
+            customer_id=row[0] if row else None,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -235,6 +311,15 @@ def create_asset():
             "name=excluded.name, expected_device_ident=excluded.expected_device_ident, active=1",
             (customer_id, beacon_id, name, expected_device_ident, 1, "unknown", _now_label()),
         )
+        log_event(
+            "admin.save_expected_asset",
+            target_type="asset",
+            target_id=beacon_id,
+            details=f"Saved expected asset {name or beacon_id}",
+            actor_user=current_user(),
+            customer_id=customer_id,
+            conn=conn,
+        )
         conn.commit()
     finally:
         conn.close()
@@ -247,11 +332,24 @@ def toggle_asset(asset_id):
     conn = get_db()
     try:
         ph = _ph(conn)
-        row = conn.execute(f"SELECT active FROM customer_assets WHERE id = {ph}", (asset_id,)).fetchone()
+        row = conn.execute(
+            f"SELECT active, customer_id, beacon_id, name FROM customer_assets WHERE id = {ph}",
+            (asset_id,),
+        ).fetchone()
         if row:
+            new_active = 0 if row[0] else 1
             conn.execute(
                 f"UPDATE customer_assets SET active = {ph} WHERE id = {ph}",
-                (0 if row[0] else 1, asset_id),
+                (new_active, asset_id),
+            )
+            log_event(
+                "admin.toggle_expected_asset",
+                target_type="asset",
+                target_id=row[2],
+                details=f"{'Reactivated' if new_active else 'Deactivated'} expected asset {row[3] or row[2]}",
+                actor_user=current_user(),
+                customer_id=row[1],
+                conn=conn,
             )
             conn.commit()
     finally:
@@ -266,4 +364,12 @@ def run_audit_now():
     if customer_id:
         scheduled = _local_dt_from_unix() - timedelta(minutes=AUDIT_WINDOW_AFTER_MIN)
         run_customer_audit(int(customer_id), scheduled_local_dt=scheduled)
+        log_event(
+            "admin.run_manual_audit",
+            target_type="customer",
+            target_id=customer_id,
+            details="Ran manual audit from admin console",
+            actor_user=current_user(),
+            customer_id=customer_id,
+        )
     return redirect(url_for("admin.dashboard"))

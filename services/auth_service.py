@@ -5,6 +5,7 @@ from flask import Blueprint, g, redirect, render_template, request, session, url
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_db
+from services.audit_log_service import log_event
 from services.beacon_logic import format_samoa_time
 
 auth_bp = Blueprint("auth", __name__)
@@ -160,9 +161,30 @@ def login():
             if row and bool(row[2]) and check_password_hash(row[1], password):
                 session.clear()
                 session["user_id"] = row[0]
+                user_row = conn.execute(
+                    "SELECT u.id, u.customer_id, u.email, u.role, c.name "
+                    "FROM app_users u LEFT JOIN customers c ON c.id = u.customer_id "
+                    f"WHERE u.id = {ph}",
+                    (row[0],),
+                ).fetchone()
+                actor = {
+                    "id": user_row[0],
+                    "customer_id": user_row[1],
+                    "email": user_row[2],
+                    "role": user_row[3],
+                    "customer_name": user_row[4],
+                } if user_row else {"id": row[0], "email": email}
                 conn.execute(
                     f"UPDATE app_users SET last_login_at = {ph} WHERE id = {ph}",
                     (_now_label(), row[0]),
+                )
+                log_event(
+                    "login",
+                    target_type="user",
+                    target_id=row[0],
+                    details=f"{actor.get('email')} signed in",
+                    actor_user=actor,
+                    conn=conn,
                 )
                 conn.commit()
                 next_url = request.args.get("next") or ""
@@ -178,6 +200,15 @@ def login():
 
 @auth_bp.route("/logout")
 def logout():
+    user = current_user()
+    if user:
+        log_event(
+            "logout",
+            target_type="user",
+            target_id=user.get("id"),
+            details=f"{user.get('email')} signed out",
+            actor_user=user,
+        )
     session.clear()
     return redirect(url_for("auth.login"))
 

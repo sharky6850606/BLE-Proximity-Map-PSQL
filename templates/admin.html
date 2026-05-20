@@ -365,6 +365,17 @@
         <div class="summary-row"><span>Recent beacons</span><strong>{{ active_beacons|length }}</strong></div>
         <button type="button" class="secondary-btn" data-modal-open="beacons-modal">View active beacons</button>
       </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Audit Logs</h2>
+          <span class="metric">{{ audit_logs|length }} recent</span>
+        </div>
+        <div class="summary-row"><span>Login and logout tracking</span><strong>On</strong></div>
+        <div class="summary-row"><span>Admin action tracking</span><strong>On</strong></div>
+        <div class="summary-row"><span>Newest log</span><strong>{% if audit_logs %}{{ audit_logs[0][0] }}{% else %}None yet{% endif %}</strong></div>
+        <button type="button" class="secondary-btn" data-modal-open="audit-logs-modal">View all</button>
+      </section>
     </div>
   </main>
 
@@ -538,6 +549,31 @@
               <td>{{ b[3] }}</td>
               <td>{{ b[4] }}</td>
               <td>{{ "Yes" if b[5] else "No" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="audit-logs-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="audit-logs-title">
+      <div class="modal-header"><div><div class="modal-title" id="audit-logs-title">Audit Logs</div><div class="muted">{{ audit_logs|length }} recent security and admin events</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Actor</th><th>Role</th><th>Customer</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
+          <tbody>
+            {% for l in audit_logs %}
+            <tr>
+              <td>{{ l[0] }}</td>
+              <td><strong>{{ l[1] or "system" }}</strong></td>
+              <td>{{ l[2] or "" }}</td>
+              <td>{{ l[3] or "Internal" }}</td>
+              <td>{{ l[4] }}</td>
+              <td>{{ l[5] or "" }}{% if l[6] %}<div class="muted">{{ l[6] }}</div>{% endif %}</td>
+              <td>{{ l[7] or "" }}</td>
+              <td>{{ l[8] or "" }}</td>
             </tr>
             {% endfor %}
           </tbody>

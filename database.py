@@ -293,10 +293,27 @@ def init_db():
                     last_rssi DOUBLE PRECISION
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TEXT,
+                    actor_user_id BIGINT,
+                    actor_email TEXT,
+                    actor_role TEXT,
+                    customer_id BIGINT,
+                    action TEXT NOT NULL,
+                    target_type TEXT,
+                    target_id TEXT,
+                    details TEXT,
+                    ip_address TEXT
+                )
+            """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
 
             # Postgres-specific migrations for existing DBs (ignore errors if columns already exist)
             for stmt in POSTGRES_MIGRATIONS:
@@ -500,10 +517,27 @@ def init_db():
                 last_rssi REAL
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                actor_user_id INTEGER,
+                actor_email TEXT,
+                actor_role TEXT,
+                customer_id INTEGER,
+                action TEXT NOT NULL,
+                target_type TEXT,
+                target_id TEXT,
+                details TEXT,
+                ip_address TEXT
+            )
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
 
         # SQLite migrations for existing DBs
         cur.execute("PRAGMA table_info(device_states)")
