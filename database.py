@@ -27,7 +27,12 @@ POSTGRES_MIGRATIONS = [
 
 
 def _seed_default_admin(conn, cur):
-    """Create the first admin from env vars when no admin exists."""
+    """Create or promote the env admin account.
+
+    ADMIN_EMAIL/ADMIN_PASSWORD are deployment controls. If the email already
+    exists as a customer user, promote it to an internal admin and reset the
+    password from ADMIN_PASSWORD so operators cannot get locked out.
+    """
     import os
     from werkzeug.security import generate_password_hash
 
@@ -37,11 +42,16 @@ def _seed_default_admin(conn, cur):
         return
 
     ph = "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
-    row = cur.execute(f"SELECT COUNT(*) FROM app_users WHERE role = {ph}", ("admin",)).fetchone()
-    if row and int(row[0] or 0) > 0:
+    password_hash = generate_password_hash(password)
+    existing = cur.execute(f"SELECT id FROM app_users WHERE email = {ph}", (email,)).fetchone()
+    if existing:
+        cur.execute(
+            f"UPDATE app_users SET customer_id=NULL, password_hash={ph}, role={ph}, active={ph}, "
+            f"force_password_reset=0, deleted_at=NULL WHERE id={ph}",
+            (password_hash, "admin", 1, existing[0]),
+        )
         return
 
-    password_hash = generate_password_hash(password)
     cur.execute(
         f"INSERT INTO app_users (email, password_hash, role, active, created_at) VALUES ({ph},{ph},{ph},{ph},{ph})",
         (email, password_hash, "admin", 1, "seeded"),
