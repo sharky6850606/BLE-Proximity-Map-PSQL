@@ -406,13 +406,18 @@ def analytics_page():
     def _parse_time(ts_raw):
         if not ts_raw:
             return None
-        ts = str(ts_raw).replace("T", " ").replace(" UTC", "")
+        ts = str(ts_raw).replace("T", " ").replace(" UTC", "").replace("Z", "").strip()
+        if "." in ts:
+            ts = ts.split(".", 1)[0]
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
             try:
                 return datetime.strptime(ts, fmt)
             except Exception:
                 continue
         return None
+
+    def _event_dt(row):
+        return _parse_time(row.get("event_time")) or _parse_time(row.get("created_at"))
 
     payload = {
         "window_hours": 0,
@@ -559,31 +564,78 @@ def analytics_page():
         # -------- EVENT VOLUME (last window) --------
         event_types = ("in", "left", "still_in", "still_out")
         events_by_hour = {}
+        notification_events = []
         try:
-            if getattr(conn, "backend", "postgres") == "postgres":
-                erows = conn.execute(
-                    "SELECT to_char(date_trunc('hour', created_at::timestamp), 'YYYY-MM-DD HH24:00') AS hr, lower(type) AS event_type, COUNT(*) "
-                    "FROM notifications WHERE created_at::timestamp >= %s "
-                    "AND lower(type) IN ('in','left','still_in','still_out') "
-                    f"AND {notif_plain_scope_sql} "
-                    "GROUP BY hr, event_type ORDER BY hr",
-                    (window_start,) + notif_plain_scope_params,
-                ).fetchall()
-            else:
-                erows = conn.execute(
-                    "SELECT substr(created_at, 1, 13) || ':00' AS hr, lower(type) AS event_type, COUNT(*) "
-                    "FROM notifications WHERE created_at >= ? "
-                    "AND lower(type) IN ('in','left','still_in','still_out') "
-                    f"AND {notif_plain_scope_sql} "
-                    "GROUP BY hr, event_type ORDER BY hr",
-                    (window_start,) + notif_plain_scope_params,
-                ).fetchall()
+            nrows = conn.execute(
+                "SELECT COALESCE(cbn.name, bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, "
+                "lower(n.type) AS event_type, n.event_time, n.created_at, n.beacon_id, n.device_ident "
+                "FROM notifications n "
+                "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
+                f"LEFT JOIN customer_beacon_names cbn ON cbn.beacon_id = n.beacon_id AND cbn.customer_id = {ph} "
+                f"WHERE lower(n.type) IN ('in','left','still_in','still_out') AND {notif_scope_sql} "
+                "ORDER BY n.id ASC",
+                ((user or {}).get("customer_id"),) + notif_scope_params,
+            ).fetchall()
         except Exception:
-            erows = []
+            nrows = []
 
-        for hr, typ, cnt in erows:
-            events_by_hour.setdefault(str(hr), {t: 0 for t in event_types})
-            events_by_hour[str(hr)][str(typ)] = int(cnt or 0)
+        window_start_dt = _parse_time(window_start)
+        window_end_dt = _parse_time(format_samoa_time(now_ts))
+
+        for name, typ, event_time, created_at, beacon_id, device_ident in nrows:
+            event_dt = _parse_time(event_time) or _parse_time(created_at)
+            typ = str(typ or "").lower()
+            if not event_dt or typ not in event_types:
+                continue
+            if window_start_dt and event_dt < window_start_dt:
+                continue
+            if window_end_dt and event_dt > window_end_dt:
+                continue
+            notification_events.append({
+                "name": name or beacon_id or "Unknown",
+                "type": typ,
+                "time": event_dt,
+                "beacon_id": beacon_id,
+                "device_ident": device_ident,
+            })
+            hr = event_dt.strftime("%Y-%m-%d %H:00")
+            events_by_hour.setdefault(hr, {t: 0 for t in event_types})
+            events_by_hour[hr][typ] += 1
+
+        observation_events = []
+        if not notification_events:
+            try:
+                obs_scope_sql, obs_scope_params = device_scope_clause(conn, "bo.device_ident", user=user)
+                midnight_utc_ts = int((midnight_local_dt - timedelta(hours=13)).timestamp())
+                obs_rows_for_events = conn.execute(
+                    "SELECT COALESCE(cbn.name, bn.name, bo.beacon_id, 'Unknown') AS name, "
+                    "bo.observed_ts, bo.distance, bo.beacon_id, bo.device_ident "
+                    "FROM beacon_observations bo "
+                    "LEFT JOIN beacon_names bn ON bn.id = bo.beacon_id "
+                    f"LEFT JOIN customer_beacon_names cbn ON cbn.beacon_id = bo.beacon_id AND cbn.customer_id = {ph} "
+                    f"WHERE bo.observed_ts >= {ph} AND {obs_scope_sql} "
+                    "ORDER BY bo.observed_ts",
+                    ((user or {}).get("customer_id"), midnight_utc_ts) + obs_scope_params,
+                ).fetchall()
+            except Exception:
+                obs_rows_for_events = []
+
+            for name, observed_ts, distance, beacon_id, device_ident in obs_rows_for_events:
+                try:
+                    event_dt = datetime.utcfromtimestamp(float(observed_ts)) + timedelta(hours=13)
+                except Exception:
+                    continue
+                typ = "still_in" if distance is not None and float(distance) <= 5.0 else "still_out"
+                observation_events.append({
+                    "name": name or beacon_id or "Unknown",
+                    "type": typ,
+                    "time": event_dt,
+                    "beacon_id": beacon_id,
+                    "device_ident": device_ident,
+                })
+                hr = event_dt.strftime("%Y-%m-%d %H:00")
+                events_by_hour.setdefault(hr, {t: 0 for t in event_types})
+                events_by_hour[hr][typ] += 1
 
         labels = sorted(events_by_hour.keys())
         payload["event_labels"] = labels
@@ -593,37 +645,16 @@ def analytics_page():
         payload["event_still_out"] = [events_by_hour[l]["still_out"] for l in labels]
 
         # -------- TOP BEACONS --------
-        try:
-            if getattr(conn, "backend", "postgres") == "postgres":
-                trows = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, COUNT(*) "
-                    "FROM notifications n "
-                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
-                    "WHERE n.created_at::timestamp >= %s "
-                    "AND lower(n.type) IN ('in','left','still_in','still_out') "
-                    f"AND {notif_scope_sql} "
-                    "GROUP BY name, event_type",
-                    (window_start,) + notif_scope_params,
-                ).fetchall()
-            else:
-                trows = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, COUNT(*) "
-                    "FROM notifications n "
-                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
-                    "WHERE n.created_at >= ? "
-                    "AND lower(n.type) IN ('in','left','still_in','still_out') "
-                    f"AND {notif_scope_sql} "
-                    "GROUP BY name, event_type",
-                    (window_start,) + notif_scope_params,
-                ).fetchall()
-        except Exception:
-            trows = []
-
         by_beacon = {}
-        for name, typ, cnt in trows:
-            key = name or "Unknown"
+        for event in notification_events:
+            key = event["name"] or "Unknown"
             entry = by_beacon.setdefault(key, {"in": 0, "left": 0, "still_in": 0, "still_out": 0})
-            entry[str(typ)] = int(cnt or 0)
+            entry[event["type"]] += 1
+        if not by_beacon:
+            for event in observation_events:
+                key = event["name"] or "Unknown"
+                entry = by_beacon.setdefault(key, {"in": 0, "left": 0, "still_in": 0, "still_out": 0})
+                entry[event["type"]] += 1
 
         top_items = sorted(
             by_beacon.items(),
@@ -663,37 +694,40 @@ def analytics_page():
 
         # -------- PRESENCE SUMMARY --------
         presence = {}
-        try:
-            if getattr(conn, "backend", "postgres") == "postgres":
-                prow = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, n.event_time "
-                    "FROM notifications n "
-                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
-                    "WHERE n.created_at::timestamp >= %s "
-                    f"AND lower(n.type) IN ('in','left','still_in','still_out') AND {notif_scope_sql} ORDER BY n.event_time",
-                    (window_start,) + notif_scope_params,
-                ).fetchall()
-            else:
-                prow = conn.execute(
-                    "SELECT COALESCE(bn.name, n.beacon_name, n.beacon_id, 'Unknown') AS name, lower(n.type) AS event_type, n.event_time "
-                    "FROM notifications n "
-                    "LEFT JOIN beacon_names bn ON bn.id = n.beacon_id "
-                    "WHERE n.created_at >= ? "
-                    f"AND lower(n.type) IN ('in','left','still_in','still_out') AND {notif_scope_sql} ORDER BY n.event_time",
-                    (window_start,) + notif_scope_params,
-                ).fetchall()
-        except Exception:
-            prow = []
+        for event in notification_events:
+            bucket = presence.setdefault(event["name"] or "Unknown", {"events": []})
+            bucket["events"].append((event["time"], event["type"]))
+        if not presence:
+            for event in observation_events:
+                bucket = presence.setdefault(event["name"] or "Unknown", {"events": []})
+                bucket["events"].append((event["time"], event["type"]))
 
-        window_start_dt = _parse_time(window_start)
-        window_end_dt = _parse_time(format_samoa_time(now_ts))
-
-        for name, typ, event_time in prow:
-            tstamp = _parse_time(event_time)
-            if not tstamp:
-                continue
-            bucket = presence.setdefault(name or "Unknown", {"events": []})
-            bucket["events"].append((tstamp, str(typ)))
+        # Fallback: if no transition notifications exist yet, derive a useful
+        # presence view from today's beacon observations so the dashboard is not blank.
+        if not presence:
+            try:
+                obs_scope_sql, obs_scope_params = device_scope_clause(conn, "bo.device_ident", user=user)
+                midnight_utc_ts = int((midnight_local_dt - timedelta(hours=13)).timestamp())
+                obs_rows = conn.execute(
+                    "SELECT COALESCE(cbn.name, bn.name, bo.beacon_id, 'Unknown') AS name, "
+                    "bo.observed_ts, bo.distance "
+                    "FROM beacon_observations bo "
+                    "LEFT JOIN beacon_names bn ON bn.id = bo.beacon_id "
+                    f"LEFT JOIN customer_beacon_names cbn ON cbn.beacon_id = bo.beacon_id AND cbn.customer_id = {ph} "
+                    f"WHERE bo.observed_ts >= {ph} AND {obs_scope_sql} "
+                    "ORDER BY bo.observed_ts",
+                    ((user or {}).get("customer_id"), midnight_utc_ts) + obs_scope_params,
+                ).fetchall()
+            except Exception:
+                obs_rows = []
+            for name, observed_ts, distance in obs_rows:
+                try:
+                    obs_dt = datetime.utcfromtimestamp(float(observed_ts)) + timedelta(hours=13)
+                except Exception:
+                    continue
+                state = "in" if distance is not None and float(distance) <= 5.0 else "still_out"
+                bucket = presence.setdefault(name or "Unknown", {"events": []})
+                bucket["events"].append((obs_dt, state))
 
         presence_summary = []
         presence_by_beacon = {}
@@ -707,8 +741,16 @@ def analytics_page():
             if events and window_start_dt and events[0][0] > window_start_dt:
                 first_type = events[0][1]
                 # Infer the state at window start so percentages represent the full window.
-                # Example: first event "in" means beacon was out before entering.
-                last_state = "out" if first_type == "in" else "in"
+                # Transition events imply the previous opposite state; still events
+                # imply the state was already stable at the window start.
+                if first_type == "in":
+                    last_state = "out"
+                elif first_type == "left":
+                    last_state = "in"
+                elif first_type == "still_in":
+                    last_state = "in"
+                else:
+                    last_state = "out"
 
             for ts, typ in events:
                 state = "in" if typ in ("in", "still_in") else "out"

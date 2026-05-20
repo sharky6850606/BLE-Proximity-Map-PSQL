@@ -116,7 +116,8 @@
       <div class="card span-4">
         <div class="kicker">Event volume</div>
         <div class="big">{{ total_events }}</div>
-        <div class="note">IN, LEFT, STILL events {{ window_label }}.</div>
+        <div class="note">IN, LEFT, STILL events and observation fallback {{ window_label }}.</div>
+        <div class="chart-wrap" style="height:96px; margin-top:8px;"><canvas id="eventChart"></canvas></div>
       </div>
       <div class="card span-4">
         <div class="kicker">Uptime OK rate</div>
@@ -168,6 +169,9 @@
                   <td><strong>{{ b.total }}</strong></td>
                 </tr>
               {% endfor %}
+              {% if not top_beacons %}
+                <tr><td colspan="6" class="note">No beacon activity has been recorded in this window yet.</td></tr>
+              {% endif %}
             </tbody>
           </table>
         </div>
@@ -267,6 +271,11 @@
   <script>
     const statusLabels = {{ status_labels|tojson }};
     const statusCounts = {{ status_counts|tojson }};
+    const eventLabels = {{ event_labels|tojson }};
+    const eventIn = {{ event_in|tojson }};
+    const eventLeft = {{ event_left|tojson }};
+    const eventStillIn = {{ event_still_in|tojson }};
+    const eventStillOut = {{ event_still_out|tojson }};
 
     const presenceByBeacon = {{ presence_by_beacon_json|safe }};
 
@@ -284,6 +293,30 @@
           maintainAspectRatio: false,
           plugins: { legend: { position: 'bottom' } },
           cutout: '60%'
+        }
+      });
+    }
+
+    function makeEventChart(ctx) {
+      return new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: eventLabels,
+          datasets: [
+            { label: 'In', data: eventIn, backgroundColor: '#4ade80', stack: 'events' },
+            { label: 'Left', data: eventLeft, backgroundColor: '#f87171', stack: 'events' },
+            { label: 'Still In', data: eventStillIn, backgroundColor: '#38bdf8', stack: 'events' },
+            { label: 'Still Out', data: eventStillOut, backgroundColor: '#facc15', stack: 'events' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { display: false, stacked: true },
+            y: { display: false, stacked: true, beginAtZero: true }
+          }
         }
       });
     }
@@ -345,6 +378,9 @@
     window.addEventListener('load', () => {
       const statusCtx = document.getElementById('statusChart');
       if (statusCtx && statusLabels.length) makeStatusChart(statusCtx);
+
+      const eventCtx = document.getElementById('eventChart');
+      if (eventCtx && eventLabels.length) makeEventChart(eventCtx);
 
       updatePresenceUI();
     });
