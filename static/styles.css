@@ -8,10 +8,15 @@ html, body {
 #app-container {
     display: flex;
     height: 100%;
+    position: relative;
+    overflow: hidden;
 }
 
 #sidebar {
     width: 320px;
+    flex: 0 0 320px;
+    position: relative;
+    z-index: 1500;
     background: #101827;
     color: #e5e7eb;
     padding: 16px;
@@ -67,7 +72,10 @@ html, body {
 
 #map {
     flex: 1;
+    min-width: 0;
     height: 100%;
+    position: relative;
+    z-index: 1;
 }
 
 
@@ -366,6 +374,8 @@ html, body {
 
 #menu-panel {
   position: fixed;
+  will-change: transform;
+  contain: paint;
   left: 0;
   top: 0;
   height: 100%;

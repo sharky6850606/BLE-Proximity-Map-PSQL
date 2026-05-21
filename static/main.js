@@ -18,6 +18,8 @@ let lastDevices = [];
 let lastBeaconsAgg = [];
 let currentDeviceFilter = '';   // '' = all devices
 let deviceColors = {};          // ident -> color from backend
+let hasFitInitialBounds = false;
+let shouldFitBoundsOnNextRender = true;
 
 let renameContext = null;       // { type: 'device'|'beacon', id: string }
 
@@ -285,7 +287,7 @@ function updateMap(devices, aggBeacons) {
   });
 
 
-  // Draw beacons as circles around their device positions
+  // Draw beacons as lightweight dots around their device positions. Keep real distance in labels/tooltips.
   aggBeacons.forEach(b => {
     if (!b || b.lat == null || b.lon == null) return;
     if (currentDeviceFilter && b.deviceIdent !== currentDeviceFilter) return;
@@ -293,12 +295,17 @@ function updateMap(devices, aggBeacons) {
     const color = getDeviceColor(b.deviceIdent, b.deviceColor || '#22c55e');
     const latlng = [b.lat, b.lon];
 
-    const circle = L.circle(latlng, {
-      radius: Math.max(5, (b.distance || 1) * 2 + (([...b.id].reduce((a,c)=>a+c.charCodeAt(0),0) % 3) * 3)),
+    const visualRadius = Math.min(
+      18,
+      Math.max(6, 6 + Math.min(Number(b.distance) || 0, 25) / 3)
+    );
+    const circle = L.circleMarker(latlng, {
+      radius: visualRadius,
       weight: 2,
       color,
       fillColor: color,
-      fillOpacity: 0.15
+      fillOpacity: 0.25,
+      interactive: true
     });
 
     const tooltipHtml = `
@@ -317,9 +324,11 @@ function updateMap(devices, aggBeacons) {
     beaconCircles[`${b.deviceIdent}::${b.id}`] = circle;
   });
 
-  if (bounds.length > 0) {
+  if (bounds.length > 0 && (shouldFitBoundsOnNextRender || !hasFitInitialBounds)) {
     const latLngBounds = L.latLngBounds(bounds);
-    map.fitBounds(latLngBounds.pad(0.2));
+    map.fitBounds(latLngBounds.pad(0.2), { animate: false });
+    hasFitInitialBounds = true;
+    shouldFitBoundsOnNextRender = false;
   }
 }
 
@@ -329,6 +338,7 @@ function setDeviceFilter(ident) {
   } else {
     currentDeviceFilter = ident;
   }
+  shouldFitBoundsOnNextRender = true;
   updateMap(lastDevices, lastBeaconsAgg);
   updateSidebar(lastDevices, currentBeaconNames);
 }
