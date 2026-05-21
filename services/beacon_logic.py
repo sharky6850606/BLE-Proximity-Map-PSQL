@@ -38,9 +38,21 @@ def voltage_to_percent(v):
         v = float(v)
     except Exception:
         return None
-    lo, hi = 2.0, 3.0
-    p = (v - lo) / (hi - lo) * 100.0
-    return int(max(0.0, min(100.0, p)))
+    if v <= 0:
+        return None
+    # Teltonika EYE voltage bands for CR2450 tags:
+    # 3.2-2.8V excellent, 2.8-2.5V working, 2.5-2.2V low, 2.0V dead.
+    if v >= 2.8:
+        p = 80.0 + ((min(v, 3.2) - 2.8) / 0.4 * 20.0)
+    elif v >= 2.5:
+        p = 20.0 + ((v - 2.5) / 0.3 * 60.0)
+    elif v >= 2.2:
+        p = 10.0 + ((v - 2.2) / 0.3 * 10.0)
+    elif v >= 2.0:
+        p = (v - 2.0) / 0.2 * 10.0
+    else:
+        p = 0.0
+    return int(round(max(0.0, min(100.0, p))))
 
 
 def simplify_message(msg: dict) -> dict:
@@ -70,13 +82,19 @@ def simplify_message(msg: dict) -> dict:
             dist = rssi_to_distance(rssi)
             voltage = b.get("battery.voltage") or (b.get("battery") or {}).get("voltage")
 
+            try:
+                voltage_value = float(voltage) if voltage not in (None, "") else None
+            except Exception:
+                voltage_value = None
+
             _beacon_state[(ident, bid)] = {
                 "id": bid,
                 "rssi": rssi,
                 "distance": dist,
                 "last_seen_raw": now_ts,
                 "last_seen": format_samoa_time(now_ts),
-                "battery_percent": voltage_to_percent(voltage),
+                "battery_voltage": voltage_value,
+                "battery_percent": voltage_to_percent(voltage_value),
             }
 
     beacons = []
@@ -90,6 +108,7 @@ def simplify_message(msg: dict) -> dict:
                 "rssi": info.get("rssi"),
                 "distance": info.get("distance"),
                 "last_seen": info.get("last_seen"),
+                "battery_voltage": info.get("battery_voltage"),
                 "battery_percent": info.get("battery_percent"),
             })
         else:

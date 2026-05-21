@@ -61,6 +61,8 @@ def flespi_receiver():
                     snap_ts,
                     b.get("distance"),
                     b.get("rssi"),
+                    b.get("battery_voltage"),
+                    b.get("battery_percent"),
                 )
             )
 
@@ -94,21 +96,22 @@ def flespi_receiver():
             (now_ts, now_ts - OFFLINE_AFTER_SEC),
         )
 
-        for beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi in beacon_updates:
+        for beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, battery_voltage, battery_percent in beacon_updates:
             conn.execute(
                 f"INSERT INTO beacon_states "
-                f"(beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, active, missing) "
-                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},1,0) "
+                f"(beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, last_battery_voltage, last_battery_percent, active, missing) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},1,0) "
                 "ON CONFLICT(beacon_key) DO UPDATE SET "
                 "device_ident=excluded.device_ident, beacon_id=excluded.beacon_id, "
                 "last_seen_ts=excluded.last_seen_ts, last_distance=excluded.last_distance, "
-                "last_rssi=excluded.last_rssi, active=1, missing=0",
-                (beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi),
+                "last_rssi=excluded.last_rssi, last_battery_voltage=excluded.last_battery_voltage, "
+                "last_battery_percent=excluded.last_battery_percent, active=1, missing=0",
+                (beacon_key, device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, battery_voltage, battery_percent),
             )
             conn.execute(
-                f"INSERT INTO beacon_observations (observed_ts, device_ident, beacon_id, distance, rssi, created_at) "
-                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
-                (last_seen_ts, device_ident, beacon_id, last_distance, last_rssi, int(time.time())),
+                f"INSERT INTO beacon_observations (observed_ts, device_ident, beacon_id, distance, rssi, battery_voltage, battery_percent, created_at) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+                (last_seen_ts, device_ident, beacon_id, last_distance, last_rssi, battery_voltage, battery_percent, int(time.time())),
             )
             mark_asset_found_if_missing(
                 conn,

@@ -86,7 +86,7 @@ def data():
         # Pull fresh beacon rows and group by device
         bscope_sql, bscope_params = device_scope_clause(conn, "device_ident", user=user)
         brows = conn.execute(
-            f"SELECT device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, missing "
+            f"SELECT device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, last_battery_voltage, last_battery_percent, missing "
             f"FROM beacon_states "
             f"WHERE beacon_id IS NOT NULL AND last_seen_ts IS NOT NULL AND (missing IS NULL OR missing = 0) "
             f"AND last_seen_ts >= {ph} AND {bscope_sql}",
@@ -94,7 +94,7 @@ def data():
         ).fetchall()
 
         beacons_by_device = {}
-        for device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, _missing in brows:
+        for device_ident, beacon_id, last_seen_ts, last_distance, last_rssi, battery_voltage, battery_percent, _missing in brows:
             did = str(device_ident or "").strip()
             bid = str(beacon_id or "").strip()
             if not did or not bid:
@@ -104,7 +104,8 @@ def data():
                 "rssi": last_rssi,
                 "distance": float(last_distance) if last_distance is not None else None,
                 "last_seen": format_samoa_time(int(last_seen_ts)),
-                "battery_percent": None,
+                "battery_voltage": float(battery_voltage) if battery_voltage is not None else None,
+                "battery_percent": int(battery_percent) if battery_percent is not None else None,
             })
 
         for device_ident, last_seen_ts, last_lat, last_lon in drows:

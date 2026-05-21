@@ -15,6 +15,10 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_distance DOUBLE PRECISION",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_battery_voltage DOUBLE PRECISION",
+    "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_battery_percent INTEGER",
+    "ALTER TABLE beacon_observations ADD COLUMN IF NOT EXISTS battery_voltage DOUBLE PRECISION",
+    "ALTER TABLE beacon_observations ADD COLUMN IF NOT EXISTS battery_percent INTEGER",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0",
     "ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT",
@@ -143,6 +147,8 @@ def init_db():
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_seen_ts BIGINT")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_distance DOUBLE PRECISION")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_rssi DOUBLE PRECISION")
+            cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_battery_voltage DOUBLE PRECISION")
+            cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_battery_percent INTEGER")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_status_ts BIGINT")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS missing INTEGER DEFAULT 0")
             cur.execute("ALTER TABLE beacon_states ADD COLUMN IF NOT EXISTS last_missing_ts BIGINT")
@@ -263,6 +269,8 @@ def init_db():
                     beacon_id TEXT,
                     distance DOUBLE PRECISION,
                     rssi DOUBLE PRECISION,
+                    battery_voltage DOUBLE PRECISION,
+                    battery_percent INTEGER,
                     created_at TEXT
                 )
             """)
@@ -375,6 +383,8 @@ def init_db():
                 last_seen_ts INTEGER,
                 last_distance REAL,
                 last_rssi REAL,
+                last_battery_voltage REAL,
+                last_battery_percent INTEGER,
                 last_status_ts INTEGER,
                 missing INTEGER DEFAULT 0,
                 last_missing_ts INTEGER
@@ -487,6 +497,8 @@ def init_db():
                 beacon_id TEXT,
                 distance REAL,
                 rssi REAL,
+                battery_voltage REAL,
+                battery_percent INTEGER,
                 created_at TEXT
             )
         """)
@@ -548,6 +560,19 @@ def init_db():
             cur.execute("ALTER TABLE device_states ADD COLUMN last_lon REAL")
         if "last_payload_ts" not in existing_cols:
             cur.execute("ALTER TABLE device_states ADD COLUMN last_payload_ts INTEGER")
+        cur.execute("PRAGMA table_info(beacon_states)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "last_battery_voltage" not in existing_cols:
+            cur.execute("ALTER TABLE beacon_states ADD COLUMN last_battery_voltage REAL")
+        if "last_battery_percent" not in existing_cols:
+            cur.execute("ALTER TABLE beacon_states ADD COLUMN last_battery_percent INTEGER")
+        cur.execute("PRAGMA table_info(beacon_observations)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "battery_voltage" not in existing_cols:
+            cur.execute("ALTER TABLE beacon_observations ADD COLUMN battery_voltage REAL")
+        if "battery_percent" not in existing_cols:
+            cur.execute("ALTER TABLE beacon_observations ADD COLUMN battery_percent INTEGER")
+
         cur.execute("PRAGMA table_info(activity_reports)")
         existing_cols = {r[1] for r in cur.fetchall()}
         if "customer_id" not in existing_cols:

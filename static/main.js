@@ -156,6 +156,27 @@ function startPolling() {
 }
 
 
+function formatBeaconBattery(beacon) {
+  if (!beacon || beacon.battery_percent == null) return '-';
+  const pct = Math.max(0, Math.min(100, Number(beacon.battery_percent)));
+  if (!Number.isFinite(pct)) return '-';
+  const voltage = beacon.battery_voltage != null && Number.isFinite(Number(beacon.battery_voltage))
+    ? ` | ${Number(beacon.battery_voltage).toFixed(2)}V`
+    : '';
+  return `${Math.round(pct)}%${voltage}`;
+}
+
+function formatBeaconMeta(beacon) {
+  const parts = [];
+  if (beacon.distance != null && Number.isFinite(Number(beacon.distance))) {
+    parts.push(`${Number(beacon.distance).toFixed(2)} m`);
+  }
+  if (beacon.battery_percent != null && Number.isFinite(Number(beacon.battery_percent))) {
+    parts.push(`${Math.round(Number(beacon.battery_percent))}%`);
+  }
+  return parts.length ? `<span class="beacon-distance">(${parts.join(' | ')})</span>` : '';
+}
+
 // ---- Aggregate beacons across devices ----
 
 function aggregateBeacons(devices, beaconNames) {
@@ -172,6 +193,8 @@ function aggregateBeacons(devices, beaconNames) {
         deviceName: d.name || d.ident,
         deviceColor: d.color || '#3b82f6',
         distance: b.distance,
+        battery_percent: b.battery_percent,
+        battery_voltage: b.battery_voltage,
         last_seen: b.last_seen,
         rssi: b.rssi,
         lat: d.lat,
@@ -284,6 +307,7 @@ function updateMap(devices, aggBeacons) {
         <div>ID: ${b.id}</div>
         <div>Device: ${b.deviceName}</div>
         <div>Distance: ${b.distance != null ? b.distance.toFixed(2) + ' m' : '-'}</div>
+        <div>Battery: ${formatBeaconBattery(b)}</div>
         <div>Last seen: ${b.last_seen || '-'}</div>
       </div>
     `;
@@ -363,6 +387,8 @@ function updateSidebar(devices, beaconNames) {
         id,
         name: bName,
         distance: b.distance,
+        battery_percent: b.battery_percent,
+        battery_voltage: b.battery_voltage,
         last_seen: b.last_seen
       };
     });
@@ -400,7 +426,7 @@ function updateSidebar(devices, beaconNames) {
             <div class="beacon-info-block">
               <div class="beacon-name">
                 ${b.name}
-                ${b.distance != null ? `<span class="beacon-distance">(${b.distance.toFixed(2)} m)</span>` : ''}
+                ${formatBeaconMeta(b)}
               </div>
               <div class="beacon-id">${b.id}</div>
             </div>
