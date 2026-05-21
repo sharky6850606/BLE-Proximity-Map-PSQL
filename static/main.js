@@ -815,8 +815,6 @@ function setupMenu() {
   btn.addEventListener('click', openMenu);
   closeBtn.addEventListener('click', closeMenu);
   overlay.addEventListener('click', closeMenu);
-  const downloadLatestBtn = document.getElementById('menu-download-latest');
-  const reportsHistoryBtn = document.getElementById('menu-reports-history');
   const notifHistoryBtn = document.getElementById('menu-notif-history');
   const auditReportsBtn = document.getElementById('menu-audit-reports');
   const activityReportsBtn = document.getElementById('menu-activity-reports');
@@ -830,12 +828,6 @@ function setupMenu() {
     window.location.href = url;
   }
 
-  if (downloadLatestBtn) {
-    downloadLatestBtn.addEventListener('click', () => goTo('/download/latest-report'));
-  }
-  if (reportsHistoryBtn) {
-    reportsHistoryBtn.addEventListener('click', () => goTo('/reports/history'));
-  }
   if (notifHistoryBtn) {
     notifHistoryBtn.addEventListener('click', () => goTo('/notifications/history'));
   }
