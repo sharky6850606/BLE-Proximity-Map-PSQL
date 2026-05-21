@@ -32,6 +32,8 @@ AUDIT_HOUR = int(os.getenv("AUDIT_HOUR", "18"))  # 6 PM Samoa time
 AUDIT_MINUTE = int(os.getenv("AUDIT_MINUTE", "0"))
 AUDIT_WINDOW_BEFORE_MIN = int(os.getenv("AUDIT_WINDOW_BEFORE_MIN", "15"))
 AUDIT_WINDOW_AFTER_MIN = int(os.getenv("AUDIT_WINDOW_AFTER_MIN", "15"))
+AUDIT_EMAIL_HOUR = int(os.getenv("AUDIT_EMAIL_HOUR", "18"))  # 6:30 PM Samoa time
+AUDIT_EMAIL_MINUTE = int(os.getenv("AUDIT_EMAIL_MINUTE", "30"))
 
 # =============================
 # Email

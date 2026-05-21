@@ -9,6 +9,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from config import (
+    AUDIT_EMAIL_HOUR,
+    AUDIT_EMAIL_MINUTE,
     AUDIT_HOUR,
     AUDIT_MINUTE,
     AUDIT_REPORTS_DIR,
@@ -49,6 +51,11 @@ def _audit_schedule_for_day(local_dt=None):
     start = scheduled - timedelta(minutes=AUDIT_WINDOW_BEFORE_MIN)
     end = scheduled + timedelta(minutes=AUDIT_WINDOW_AFTER_MIN)
     return scheduled, start, end
+
+
+def _audit_email_time_for_day(local_dt=None):
+    local_dt = local_dt or _local_dt_from_unix()
+    return local_dt.replace(hour=AUDIT_EMAIL_HOUR, minute=AUDIT_EMAIL_MINUTE, second=0, microsecond=0)
 
 
 def _fmt_local_dt(dt):
@@ -247,35 +254,9 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
             f"UPDATE audit_runs SET status={ph}, pdf_path={ph} WHERE id={ph}",
             ("complete", pdf_path, audit_run_id),
         )
-        recipients = [
-            r[0] for r in conn.execute(
-                f"SELECT email FROM app_users WHERE customer_id = {ph} AND active = 1 AND deleted_at IS NULL",
-                (customer_id,),
-            ).fetchall()
-        ]
         conn.commit()
     finally:
         conn.close()
-
-    sent = send_report_email(
-        recipients,
-        f"Daily Equipment Audit - {scheduled_for}",
-        f"Attached is the daily equipment audit for {customer[1]}.\n\n"
-        f"Scan window: {window_start_label} to {window_end_label} Samoa time.\n"
-        f"Assets checked: {len(results)}.",
-        attachment_path=pdf_path,
-    )
-    if sent:
-        conn = get_db()
-        try:
-            ph = _ph(conn)
-            conn.execute(
-                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
-                (format_samoa_time(time.time()), audit_run_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
 
     return pdf_path
 
@@ -296,6 +277,79 @@ def run_daily_audits(scheduled_local_dt=None):
         except Exception as e:
             print(f"[audit] customer {row[0]} failed: {e}")
     return paths
+
+
+def _audit_email_recipients(conn, customer_id):
+    ph = _ph(conn)
+    rows = conn.execute(
+        f"SELECT email FROM app_users WHERE customer_id = {ph} AND active = 1 AND deleted_at IS NULL ORDER BY role, email",
+        (customer_id,),
+    ).fetchall()
+    return [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+
+
+def send_pending_audit_report_emails(scheduled_local_dt=None):
+    """Email completed audit PDFs for the audit day that have not been sent yet."""
+    scheduled, _window_start, _window_end = _audit_schedule_for_day(scheduled_local_dt)
+    scheduled_for = _fmt_local_dt(scheduled)
+
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        rows = conn.execute(
+            f"SELECT ar.id, ar.customer_id, c.name, ar.pdf_path, ar.scan_window_start, ar.scan_window_end "
+            f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
+            f"WHERE c.active = 1 AND ar.scheduled_for = {ph} AND ar.status = {ph} "
+            f"AND ar.pdf_path IS NOT NULL AND (ar.emailed_at IS NULL OR ar.emailed_at = '') "
+            f"ORDER BY c.name",
+            (scheduled_for, "complete"),
+        ).fetchall()
+        pending = []
+        for audit_id, customer_id, customer_name, pdf_path, window_start, window_end in rows:
+            pending.append({
+                "audit_id": audit_id,
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "pdf_path": pdf_path,
+                "window_start": window_start,
+                "window_end": window_end,
+                "recipients": _audit_email_recipients(conn, customer_id),
+            })
+    finally:
+        conn.close()
+
+    sent_count = 0
+    for item in pending:
+        pdf_path = item["pdf_path"]
+        if not pdf_path or not os.path.exists(pdf_path):
+            print(f"[audit-email] skipped audit {item['audit_id']}: report file missing")
+            continue
+
+        sent = send_report_email(
+            item["recipients"],
+            f"Daily Equipment Audit - {scheduled_for}",
+            f"Attached is the daily equipment audit for {item['customer_name']}.\n\n"
+            f"Scan window: {item['window_start']} to {item['window_end']} Samoa time.",
+            attachment_path=pdf_path,
+        )
+        if not sent:
+            continue
+
+        conn = get_db()
+        try:
+            ph = _ph(conn)
+            conn.execute(
+                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
+                (format_samoa_time(time.time()), item["audit_id"]),
+            )
+            conn.commit()
+            sent_count += 1
+        finally:
+            conn.close()
+
+    if pending:
+        print(f"[audit-email] sent {sent_count}/{len(pending)} audit report emails for {scheduled_for}")
+    return sent_count
 
 
 def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance=None, rssi=None):
