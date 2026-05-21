@@ -37,6 +37,7 @@ def run_once():
     This evaluator:
       - emits IN / LEFT on true state transitions
       - emits STILL_IN / STILL_OUT every 10 minutes while state remains unchanged
+      - emits NOT_IN_LAST_PACKET once when a previously visible beacon goes stale
       - does not emit MISSING; missing is now decided only by the 6 PM customer audit
 
     All emitted notifications are persisted.
@@ -93,6 +94,13 @@ def run_once():
         # This prevents STILL_OUT notifications for beacons that are currently not displayed.
         if age > PRESENCE_FRESH_SEC:
             if int(active_db or 0) != 0:
+                emit_notification(
+                    "not_in_last_packet",
+                    beacon_id,
+                    event_time=event_time,
+                    device_ident=device_ident,
+                    distance=last_distance,
+                )
                 cur.execute(
                     f"UPDATE beacon_states SET active=0, last_status_ts={ph} WHERE beacon_key={ph}",
                     (now, beacon_key),

@@ -12,7 +12,7 @@ from services.reporting_service import start_daily_thread, generate_daily_report
 from services.evaluator_service import start_evaluator_thread
 from services.auth_service import auth_bp, login_required, admin_required, is_admin, current_user, device_scope_clause, can_access_device, allowed_device_idents
 from services.audit_log_service import log_event
-from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR
+from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR, TTL_SECONDS
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-change-me")
@@ -526,15 +526,20 @@ def analytics_page():
             payload["devices_total"] = 0
 
         try:
+            fresh_cutoff = int(now_ts) - int(TTL_SECONDS)
             if getattr(conn, "backend", "postgres") == "postgres":
                 srows = conn.execute(
-                    f"SELECT state, missing, COUNT(*) FROM beacon_states WHERE {bs_scope_sql} GROUP BY state, missing",
-                    bs_scope_params,
+                    f"SELECT state, missing, COUNT(*) FROM beacon_states "
+                    f"WHERE last_seen_ts IS NOT NULL AND last_seen_ts >= %s AND active = 1 AND {bs_scope_sql} "
+                    f"GROUP BY state, missing",
+                    (fresh_cutoff,) + bs_scope_params,
                 ).fetchall()
             else:
                 srows = conn.execute(
-                    f"SELECT state, missing, COUNT(*) FROM beacon_states WHERE {bs_scope_sql} GROUP BY state, missing",
-                    bs_scope_params,
+                    f"SELECT state, missing, COUNT(*) FROM beacon_states "
+                    f"WHERE last_seen_ts IS NOT NULL AND last_seen_ts >= ? AND active = 1 AND {bs_scope_sql} "
+                    f"GROUP BY state, missing",
+                    (fresh_cutoff,) + bs_scope_params,
                 ).fetchall()
         except Exception:
             srows = []
