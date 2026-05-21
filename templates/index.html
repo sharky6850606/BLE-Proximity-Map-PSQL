@@ -61,6 +61,30 @@
         <div id="device-list"></div>
       </div>
 
+      {% if current_user %}
+      {% set account_email = current_user.email or "" %}
+      {% set account_name = current_user.customer_name or ("Internal admin" if is_admin_user else "Account") %}
+      <div class="account-area">
+        <button id="account-chip" class="account-chip" type="button" aria-expanded="false" aria-controls="account-menu">
+          <span class="account-avatar">{{ account_email[:1]|upper }}</span>
+          <span class="account-text">
+            <span class="account-email">{{ account_email }}</span>
+            <span class="account-context">{{ account_name }}</span>
+          </span>
+        </button>
+        <div id="account-menu" class="account-menu hidden">
+          <div class="account-menu-head">
+            <strong>{{ account_email }}</strong>
+            <span>{{ account_name }}</span>
+          </div>
+          {% if is_admin_user %}
+          <a href="{{ url_for('admin.dashboard') }}">Admin console</a>
+          {% endif %}
+          <a href="{{ url_for('auth.logout') }}">Logout</a>
+        </div>
+      </div>
+      {% endif %}
+
     </div>
 
     <div id="map"></div>

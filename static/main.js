@@ -860,6 +860,33 @@ function setupMenu() {
 
 }
 
+function setupAccountMenu() {
+  const chip = document.getElementById('account-chip');
+  const menu = document.getElementById('account-menu');
+  if (!chip || !menu) return;
+
+  function closeAccountMenu() {
+    menu.classList.add('hidden');
+    chip.setAttribute('aria-expanded', 'false');
+  }
+
+  chip.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const isOpen = !menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', isOpen);
+    chip.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  menu.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  document.addEventListener('click', closeAccountMenu);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeAccountMenu();
+  });
+}
+
 // ---- Init ----
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -869,6 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   initMap();
   setupMenu();
+  setupAccountMenu();
   setupRenameModalHandlers();
   setupNotificationsUI();
   startPolling();
