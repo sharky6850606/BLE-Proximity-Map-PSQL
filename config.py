@@ -38,6 +38,12 @@ AUDIT_EMAIL_MINUTE = int(os.getenv("AUDIT_EMAIL_MINUTE", "30"))
 # =============================
 # Email
 # =============================
-MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "").strip().lower()
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
+MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "smtp").strip().lower()
 MAIL_FROM = os.getenv("MAIL_FROM", "").strip()
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() not in ("0", "false", "no", "off")
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0").strip().lower() in ("1", "true", "yes", "on")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
