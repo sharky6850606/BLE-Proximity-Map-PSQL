@@ -20,7 +20,7 @@ from config import (
 )
 from database import get_db
 from services.beacon_logic import format_samoa_time
-from services.email_service import send_report_email
+from services.email_service import send_report_email_with_results
 from services.notifications_service import emit_notification
 from services.reporting_service import _paragraph_text
 
@@ -288,6 +288,109 @@ def _audit_email_recipients(conn, customer_id):
     return [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
 
 
+def _insert_email_log(conn, audit_id, customer_id, recipient, subject, result, attachment_path, send_type, actor_user=None):
+    ph = _ph(conn)
+    actor_user = actor_user or {}
+    conn.execute(
+        f"INSERT INTO email_logs "
+        f"(created_at, audit_run_id, customer_id, recipient, subject, provider, status, error, attachment_path, send_type, actor_user_id, actor_email) "
+        f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+        (
+            format_samoa_time(time.time()),
+            audit_id,
+            customer_id,
+            recipient,
+            subject,
+            result.get("provider"),
+            result.get("status"),
+            result.get("error") or "",
+            attachment_path,
+            send_type,
+            actor_user.get("id"),
+            actor_user.get("email"),
+        ),
+    )
+
+
+def send_audit_report_email(audit_id, actor_user=None, send_type="manual"):
+    """Send one audit report PDF and log each recipient delivery attempt."""
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        row = conn.execute(
+            f"SELECT ar.id, ar.customer_id, c.name, ar.scheduled_for, ar.scan_window_start, ar.scan_window_end, ar.pdf_path, ar.status "
+            f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id WHERE ar.id = {ph}",
+            (audit_id,),
+        ).fetchone()
+        if not row:
+            return 0
+        audit_id, customer_id, customer_name, scheduled_for, window_start, window_end, pdf_path, status = row
+        subject = f"Daily Equipment Audit - {scheduled_for or 'report unavailable'}"
+        if status != "complete" or not pdf_path or not os.path.exists(pdf_path):
+            _insert_email_log(
+                conn,
+                audit_id,
+                customer_id,
+                "",
+                subject,
+                {"provider": "smtp", "status": "skipped", "error": "Audit report PDF is not ready"},
+                pdf_path,
+                send_type,
+                actor_user=actor_user,
+            )
+            conn.commit()
+            return 0
+        recipients = _audit_email_recipients(conn, customer_id)
+    finally:
+        conn.close()
+
+    body = (
+        f"Attached is the daily equipment audit for {customer_name}.\n\n"
+        f"Scan window: {window_start} to {window_end} Samoa time."
+    )
+    results = send_report_email_with_results(recipients, subject, body, attachment_path=pdf_path)
+
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        sent_count = 0
+        if not results:
+            _insert_email_log(
+                conn,
+                audit_id,
+                customer_id,
+                "",
+                subject,
+                {"provider": "smtp", "status": "skipped", "error": "No active customer recipients"},
+                pdf_path,
+                send_type,
+                actor_user=actor_user,
+            )
+        for result in results:
+            if result.get("status") == "sent":
+                sent_count += 1
+            _insert_email_log(
+                conn,
+                audit_id,
+                customer_id,
+                result.get("recipient") or "",
+                subject,
+                result,
+                pdf_path,
+                send_type,
+                actor_user=actor_user,
+            )
+        if sent_count:
+            conn.execute(
+                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
+                (format_samoa_time(time.time()), audit_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return sent_count
+
+
 def send_pending_audit_report_emails(scheduled_local_dt=None):
     """Email completed audit PDFs for the audit day that have not been sent yet."""
     scheduled, _window_start, _window_end = _audit_schedule_for_day(scheduled_local_dt)
@@ -297,58 +400,21 @@ def send_pending_audit_report_emails(scheduled_local_dt=None):
     try:
         ph = _ph(conn)
         rows = conn.execute(
-            f"SELECT ar.id, ar.customer_id, c.name, ar.pdf_path, ar.scan_window_start, ar.scan_window_end "
-            f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
+            f"SELECT ar.id FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
             f"WHERE c.active = 1 AND ar.scheduled_for = {ph} AND ar.status = {ph} "
             f"AND ar.pdf_path IS NOT NULL AND (ar.emailed_at IS NULL OR ar.emailed_at = '') "
             f"ORDER BY c.name",
             (scheduled_for, "complete"),
         ).fetchall()
-        pending = []
-        for audit_id, customer_id, customer_name, pdf_path, window_start, window_end in rows:
-            pending.append({
-                "audit_id": audit_id,
-                "customer_id": customer_id,
-                "customer_name": customer_name,
-                "pdf_path": pdf_path,
-                "window_start": window_start,
-                "window_end": window_end,
-                "recipients": _audit_email_recipients(conn, customer_id),
-            })
     finally:
         conn.close()
 
     sent_count = 0
-    for item in pending:
-        pdf_path = item["pdf_path"]
-        if not pdf_path or not os.path.exists(pdf_path):
-            print(f"[audit-email] skipped audit {item['audit_id']}: report file missing")
-            continue
+    for row in rows:
+        sent_count += send_audit_report_email(row[0], send_type="scheduled")
 
-        sent = send_report_email(
-            item["recipients"],
-            f"Daily Equipment Audit - {scheduled_for}",
-            f"Attached is the daily equipment audit for {item['customer_name']}.\n\n"
-            f"Scan window: {item['window_start']} to {item['window_end']} Samoa time.",
-            attachment_path=pdf_path,
-        )
-        if not sent:
-            continue
-
-        conn = get_db()
-        try:
-            ph = _ph(conn)
-            conn.execute(
-                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
-                (format_samoa_time(time.time()), item["audit_id"]),
-            )
-            conn.commit()
-            sent_count += 1
-        finally:
-            conn.close()
-
-    if pending:
-        print(f"[audit-email] sent {sent_count}/{len(pending)} audit report emails for {scheduled_for}")
+    if rows:
+        print(f"[audit-email] sent {sent_count} recipient emails across {len(rows)} audit reports for {scheduled_for}")
     return sent_count
 
 

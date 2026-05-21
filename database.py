@@ -27,6 +27,8 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT",
     "ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS customer_id BIGINT",
+    "CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)",
 ]
 
 
@@ -316,12 +318,31 @@ def init_db():
                     ip_address TEXT
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS email_logs (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TEXT,
+                    audit_run_id BIGINT REFERENCES audit_runs(id),
+                    customer_id BIGINT REFERENCES customers(id),
+                    recipient TEXT,
+                    subject TEXT,
+                    provider TEXT,
+                    status TEXT,
+                    error TEXT,
+                    attachment_path TEXT,
+                    send_type TEXT,
+                    actor_user_id BIGINT,
+                    actor_email TEXT
+                )
+            """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
 
             # Postgres-specific migrations for existing DBs (ignore errors if columns already exist)
             for stmt in POSTGRES_MIGRATIONS:
@@ -544,12 +565,31 @@ def init_db():
                 ip_address TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                audit_run_id INTEGER REFERENCES audit_runs(id),
+                customer_id INTEGER REFERENCES customers(id),
+                recipient TEXT,
+                subject TEXT,
+                provider TEXT,
+                status TEXT,
+                error TEXT,
+                attachment_path TEXT,
+                send_type TEXT,
+                actor_user_id INTEGER,
+                actor_email TEXT
+            )
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_customer ON audit_runs(customer_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
 
         # SQLite migrations for existing DBs
         cur.execute("PRAGMA table_info(device_states)")

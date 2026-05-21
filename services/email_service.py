@@ -75,22 +75,38 @@ def _send_smtp_email(to_email, subject, body, attachment_path=None):
 
 
 def _send_via_smtp(recipients, subject, body, attachment_path=None):
-    sent_count = 0
+    results = []
     for recipient in recipients:
         try:
-            if _send_smtp_email(recipient, subject, body, attachment_path=attachment_path):
-                sent_count += 1
+            sent = _send_smtp_email(recipient, subject, body, attachment_path=attachment_path)
+            results.append({
+                "recipient": recipient,
+                "provider": "smtp",
+                "status": "sent" if sent else "skipped",
+                "error": "" if sent else "SMTP is not fully configured",
+            })
         except Exception as e:
-            print(f"[email] smtp failed for {recipient}: {e}")
+            error = str(e)
+            print(f"[email] smtp failed for {recipient}: {error}")
+            results.append({
+                "recipient": recipient,
+                "provider": "smtp",
+                "status": "failed",
+                "error": error[:500],
+            })
     if recipients:
+        sent_count = sum(1 for r in results if r["status"] == "sent")
         print(f"[email] smtp sent {sent_count}/{len(recipients)}")
-    return sent_count > 0
+    return results
 
 
 def _send_via_sendgrid(recipients, subject, body, attachment_path=None):
     if not SENDGRID_API_KEY or not MAIL_FROM:
         print("[email] skipped: configure SENDGRID_API_KEY and MAIL_FROM")
-        return False
+        return [
+            {"recipient": e, "provider": "sendgrid", "status": "skipped", "error": "SendGrid is not fully configured"}
+            for e in recipients
+        ]
 
     payload = {
         "personalizations": [{"to": [{"email": e} for e in recipients]}],
@@ -119,23 +135,30 @@ def _send_via_sendgrid(recipients, subject, body, attachment_path=None):
             timeout=20,
         )
         if resp.status_code >= 300:
-            print(f"[email] sendgrid failed {resp.status_code}: {resp.text[:300]}")
-            return False
-        return True
+            error = resp.text[:500]
+            print(f"[email] sendgrid failed {resp.status_code}: {error[:300]}")
+            return [
+                {"recipient": e, "provider": "sendgrid", "status": "failed", "error": error}
+                for e in recipients
+            ]
+        return [
+            {"recipient": e, "provider": "sendgrid", "status": "sent", "error": ""}
+            for e in recipients
+        ]
     except Exception as e:
-        print(f"[email] sendgrid failed: {e}")
-        return False
+        error = str(e)
+        print(f"[email] sendgrid failed: {error}")
+        return [
+            {"recipient": email, "provider": "sendgrid", "status": "failed", "error": error[:500]}
+            for email in recipients
+        ]
 
 
-def send_report_email(to_emails, subject, body, attachment_path=None):
-    """Send a report email if a provider is configured.
-
-    SMTP is the default provider for Gmail/Workspace app-password delivery.
-    Returns True when at least one intended recipient was sent successfully.
-    """
+def send_report_email_with_results(to_emails, subject, body, attachment_path=None):
+    """Send a report and return one delivery result per intended recipient."""
     recipients = _clean_recipients(to_emails)
     if not recipients:
-        return False
+        return []
 
     provider = MAIL_PROVIDER or "smtp"
     if provider == "sendgrid":
@@ -144,4 +167,17 @@ def send_report_email(to_emails, subject, body, attachment_path=None):
         return _send_via_smtp(recipients, subject, body, attachment_path=attachment_path)
 
     print(f"[email] skipped: unsupported MAIL_PROVIDER={provider}")
-    return False
+    return [
+        {"recipient": e, "provider": provider, "status": "skipped", "error": f"Unsupported MAIL_PROVIDER={provider}"}
+        for e in recipients
+    ]
+
+
+def send_report_email(to_emails, subject, body, attachment_path=None):
+    """Send a report email if a provider is configured.
+
+    SMTP is the default provider for Gmail/Workspace app-password delivery.
+    Returns True when at least one intended recipient was sent successfully.
+    """
+    results = send_report_email_with_results(to_emails, subject, body, attachment_path=attachment_path)
+    return any(r.get("status") == "sent" for r in results)

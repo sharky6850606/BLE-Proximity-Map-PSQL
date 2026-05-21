@@ -122,6 +122,10 @@
       border: 1px solid rgba(148, 163, 184, 0.35);
     }
     .danger { background: var(--red); }
+    .status-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; font-size: 0.72rem; font-weight: 900; text-transform: uppercase; }
+    .status-sent { background: rgba(34,197,94,0.16); color: #86efac; border: 1px solid rgba(34,197,94,0.35); }
+    .status-failed { background: rgba(239,68,68,0.16); color: #fca5a5; border: 1px solid rgba(239,68,68,0.35); }
+    .status-skipped { background: rgba(250,204,21,0.14); color: #fde68a; border: 1px solid rgba(250,204,21,0.35); }
     .muted { color: var(--muted); font-size: 0.82rem; }
     .summary-row {
       display: flex;
@@ -409,6 +413,16 @@
         <div class="summary-row"><span>Newest log</span><strong>{% if audit_logs %}{{ audit_logs[0][0] }}{% else %}None yet{% endif %}</strong></div>
         <button type="button" class="secondary-btn" data-modal-open="audit-logs-modal">View all</button>
       </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Email Delivery</h2>
+          <span class="metric">{{ email_logs|length }} recent</span>
+        </div>
+        <div class="summary-row"><span>Newest email</span><strong>{% if email_logs %}{{ email_logs[0][0] }}{% else %}None yet{% endif %}</strong></div>
+        <div class="summary-row"><span>Manual resend</span><strong>Enabled</strong></div>
+        <button type="button" class="secondary-btn" data-modal-open="email-logs-modal">View delivery logs</button>
+      </section>
     </div>
   </main>
 
@@ -549,7 +563,7 @@
       <div class="modal-header"><div><div class="modal-title" id="audits-title">Daily Audits</div><div class="muted">{{ audits|length }} recent audit runs</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Customer</th><th>Scheduled</th><th>Scan Window</th><th>Status</th><th>Email</th><th>Report</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Scheduled</th><th>Scan Window</th><th>Status</th><th>Email</th><th>Report</th><th class="actions-cell">Actions</th></tr></thead>
           <tbody>
             {% for a in audits %}
             <tr>
@@ -559,6 +573,13 @@
               <td>{{ a[5] }}</td>
               <td>{{ a[7] or "not sent" }}</td>
               <td>{% if a[6] %}<a class="button-link" href="{{ url_for('download_audit_report', audit_id=a[0]) }}">Download</a>{% else %}<span class="muted">No report</span>{% endif %}</td>
+              <td>
+                {% if a[6] and a[5] == "complete" %}
+                <form class="inline-form" method="post" action="{{ url_for('admin.send_audit_email', audit_id=a[0]) }}">
+                  <button type="submit">{{ "Resend email" if a[7] else "Send email" }}</button>
+                </form>
+                {% else %}<span class="muted">Report not ready</span>{% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -582,6 +603,33 @@
               <td>{{ b[3] }}</td>
               <td>{{ b[4] }}</td>
               <td>{{ "Yes" if b[5] else "No" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+
+  <div class="modal-backdrop" id="email-logs-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="email-logs-title">
+      <div class="modal-header"><div><div class="modal-title" id="email-logs-title">Email Delivery Logs</div><div class="muted">{{ email_logs|length }} recent audit email attempts</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Customer</th><th>Recipient</th><th>Status</th><th>Provider</th><th>Type</th><th>Audit</th><th>Error</th><th>Actor</th></tr></thead>
+          <tbody>
+            {% for e in email_logs %}
+            <tr>
+              <td>{{ e[0] }}</td>
+              <td>{{ e[1] or "Unknown" }}</td>
+              <td><strong>{{ e[2] or "No recipient" }}</strong><div class="muted">{{ e[3] }}</div></td>
+              <td><span class="status-pill status-{{ e[4] or 'skipped' }}">{{ e[4] or "skipped" }}</span></td>
+              <td>{{ e[5] or "smtp" }}</td>
+              <td>{{ e[7] or "scheduled" }}</td>
+              <td>{{ e[9] }}</td>
+              <td>{{ e[6] or "" }}</td>
+              <td>{{ e[8] or "system" }}</td>
             </tr>
             {% endfor %}
           </tbody>

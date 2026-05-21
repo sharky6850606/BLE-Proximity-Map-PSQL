@@ -8,7 +8,7 @@ from database import get_db
 from services.auth_service import admin_required, current_user, hash_password, normalize_email
 from services.audit_log_service import log_event
 from config import AUDIT_WINDOW_AFTER_MIN
-from services.audit_service import run_customer_audit, _local_dt_from_unix
+from services.audit_service import run_customer_audit, send_audit_report_email, _local_dt_from_unix
 from services.beacon_logic import format_samoa_time
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -71,6 +71,11 @@ def dashboard():
             "FROM audit_logs al LEFT JOIN customers c ON c.id = al.customer_id "
             "ORDER BY al.id DESC LIMIT 200"
         ).fetchall()
+        email_logs = conn.execute(
+            "SELECT el.created_at, c.name, el.recipient, el.subject, el.status, el.provider, el.error, el.send_type, el.actor_email, el.audit_run_id "
+            "FROM email_logs el LEFT JOIN customers c ON c.id = el.customer_id "
+            "ORDER BY el.id DESC LIMIT 200"
+        ).fetchall()
     finally:
         conn.close()
     return render_template(
@@ -83,6 +88,7 @@ def dashboard():
         assets=assets,
         audits=audits,
         audit_logs=audit_logs,
+        email_logs=email_logs,
     )
 
 
@@ -372,4 +378,18 @@ def run_audit_now():
             actor_user=current_user(),
             customer_id=customer_id,
         )
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.route("/audits/<int:audit_id>/email", methods=["POST"])
+@admin_required
+def send_audit_email(audit_id):
+    sent_count = send_audit_report_email(audit_id, actor_user=current_user(), send_type="manual")
+    log_event(
+        "admin.send_audit_email",
+        target_type="audit_run",
+        target_id=audit_id,
+        details=f"Manual audit email send attempted; {sent_count} recipient(s) sent",
+        actor_user=current_user(),
+    )
     return redirect(url_for("admin.dashboard"))
