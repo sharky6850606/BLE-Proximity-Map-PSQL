@@ -27,11 +27,66 @@ def _slugify(value):
     return slug or "customer"
 
 
+def _ensure_email_logs_table(conn):
+    """Keep the admin console usable if a deployment missed this migration."""
+    if getattr(conn, "backend", "postgres") == "postgres":
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TEXT,
+                audit_run_id BIGINT REFERENCES audit_runs(id),
+                customer_id BIGINT REFERENCES customers(id),
+                recipient TEXT,
+                subject TEXT,
+                provider TEXT,
+                status TEXT,
+                error TEXT,
+                attachment_path TEXT,
+                send_type TEXT,
+                actor_user_id BIGINT,
+                actor_email TEXT
+            )
+        """)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                audit_run_id INTEGER REFERENCES audit_runs(id),
+                customer_id INTEGER REFERENCES customers(id),
+                recipient TEXT,
+                subject TEXT,
+                provider TEXT,
+                status TEXT,
+                error TEXT,
+                attachment_path TEXT,
+                send_type TEXT,
+                actor_user_id INTEGER,
+                actor_email TEXT
+            )
+        """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
+
+
+def _unique_customer_slug(conn, requested_slug):
+    base = _slugify(requested_slug)
+    slug = base
+    suffix = 2
+    ph = _ph(conn)
+    while conn.execute(f"SELECT 1 FROM customers WHERE slug = {ph} LIMIT 1", (slug,)).fetchone():
+        slug = f"{base}-{suffix}"
+        suffix += 1
+    return slug
+
+
 @admin_bp.route("/")
 @admin_required
 def dashboard():
     conn = get_db()
     try:
+        _ensure_email_logs_table(conn)
+        conn.commit()
         customers = conn.execute(
             "SELECT id, name, slug, active, created_at FROM customers ORDER BY name"
         ).fetchall()
@@ -98,10 +153,11 @@ def create_customer():
     name = (request.form.get("name") or "").strip()
     if not name:
         return redirect(url_for("admin.dashboard"))
-    slug = _slugify(request.form.get("slug") or name)
+    requested_slug = request.form.get("slug") or name
     conn = get_db()
     try:
         ph = _ph(conn)
+        slug = _unique_customer_slug(conn, requested_slug)
         conn.execute(
             f"INSERT INTO customers (name, slug, active, created_at) VALUES ({ph},{ph},{ph},{ph})",
             (name, slug, 1, _now_label()),

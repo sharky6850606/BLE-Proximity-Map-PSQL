@@ -17,6 +17,7 @@ let currentBeaconNames = {};
 let lastDevices = [];
 let lastBeaconsAgg = [];
 let currentDeviceFilter = '';   // '' = all devices
+let collapsedDeviceBeacons = {};    // ident -> true when nested beacons are hidden
 let deviceColors = {};          // ident -> color from backend
 let hasFitInitialBounds = false;
 let shouldFitBoundsOnNextRender = true;
@@ -403,19 +404,35 @@ function updateSidebar(devices, beaconNames) {
       };
     });
 
+    const beaconCount = beaconsForDevice.length;
+    if (beaconCount > 5 && collapsedDeviceBeacons[ident] === undefined) {
+      collapsedDeviceBeacons[ident] = true;
+    }
+    const isCollapsed = Boolean(collapsedDeviceBeacons[ident]);
+    const collapseLabel = isCollapsed ? `Show ${beaconCount} beacons` : `Hide ${beaconCount} beacons`;
+
     deviceBlock.innerHTML = `
       <div class="device-block-header" data-device-ident="${ident}">
+        <button
+          class="device-collapse-btn"
+          data-device-ident="${ident}"
+          aria-expanded="${!isCollapsed}"
+          title="${collapseLabel}"
+        >
+          ${isCollapsed ? '+' : '-'}
+        </button>
         <div class="device-color-swatch" style="background:${color};"></div>
         <div class="device-block-main">
           <div class="device-block-title-row">
             <span class="device-block-title">${name}</span>
+            <span class="device-beacon-count">${beaconCount} beacon${beaconCount === 1 ? '' : 's'}</span>
             <button
               class="icon-button rename-device-btn"
               data-device-id="${ident}"
               data-current-name="${name}"
               title="Rename device"
             >
-              ✏
+              &#9998;
             </button>
           </div>
           <div class="device-block-sub">
@@ -424,11 +441,13 @@ function updateSidebar(devices, beaconNames) {
           </div>
         </div>
       </div>
-      <div class="device-beacons-list">
+      <div class="device-beacons-list ${isCollapsed ? 'is-collapsed' : ''}">
         ${
-          beaconsForDevice.length === 0
+          beaconCount === 0
             ? '<div class="device-empty">No beacons</div>'
-            : beaconsForDevice
+            : isCollapsed
+              ? `<div class="device-collapsed-summary">${beaconCount} beacon${beaconCount === 1 ? '' : 's'} hidden</div>`
+              : beaconsForDevice
                 .map(
                   b => `
           <div class="beacon-row" data-beacon-id="${b.id}">
@@ -446,7 +465,7 @@ function updateSidebar(devices, beaconNames) {
               data-current-name="${b.name}"
               title="Rename beacon"
             >
-              ✏
+              &#9998;
             </button>
           </div>
         `
@@ -459,7 +478,8 @@ function updateSidebar(devices, beaconNames) {
     // Clicking the device header focuses that device on map
     const header = deviceBlock.querySelector('.device-block-header');
     if (header) {
-      header.addEventListener('click', () => {
+      header.addEventListener('click', e => {
+        if (e.target.closest('.device-collapse-btn, .rename-device-btn')) return;
         setDeviceFilter(ident);
       });
     }
@@ -468,7 +488,7 @@ function updateSidebar(devices, beaconNames) {
     const beaconRows = deviceBlock.querySelectorAll('.beacon-row');
     beaconRows.forEach(row => {
       row.addEventListener('click', e => {
-        // ignore clicks that were for the pencil button
+        // ignore clicks that were for inline controls
         if (e.target.closest('.rename-beacon-btn')) return;
         currentDeviceFilter = ident;
         updateMap(lastDevices, lastBeaconsAgg);
@@ -803,8 +823,18 @@ function setupRenameModalHandlers() {
     });
   }
 
-  // Pencil icon delegation
+  // Sidebar action delegation
   document.addEventListener('click', e => {
+    const collapseBtn = e.target.closest('.device-collapse-btn');
+    if (collapseBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const ident = collapseBtn.getAttribute('data-device-ident');
+      collapsedDeviceBeacons[ident] = !collapsedDeviceBeacons[ident];
+      updateSidebar(lastDevices, currentBeaconNames);
+      return;
+    }
+
     const devBtn = e.target.closest('.rename-device-btn');
     if (devBtn) {
       const id = devBtn.getAttribute('data-device-id');

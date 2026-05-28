@@ -612,6 +612,27 @@ html, body {
   cursor: pointer;
 }
 
+.device-collapse-btn {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  margin-right: 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(96,165,250,0.55);
+  background: rgba(37,99,235,0.16);
+  color: #bfdbfe;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.device-collapse-btn:hover {
+  background: rgba(37,99,235,0.3);
+  color: #eff6ff;
+}
+
 .device-color-swatch {
   width: 8px;
   height: 40px;
@@ -624,15 +645,30 @@ html, body {
 }
 
 .device-block-title-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
 }
 
 .device-block-title {
+  min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
   color: #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-beacon-count {
+  border: 1px solid rgba(96,165,250,0.35);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: #bfdbfe;
+  background: rgba(59,130,246,0.12);
+  font-size: 0.68rem;
+  white-space: nowrap;
 }
 
 .device-block-sub {
@@ -651,7 +687,15 @@ html, body {
 
 .device-beacons-list {
   margin-top: 6px;
-  padding-left: 16px;
+  padding-left: 30px;
+}
+.device-beacons-list.is-collapsed {
+  padding-left: 30px;
+}
+.device-collapsed-summary {
+  color: #93c5fd;
+  font-size: 0.72rem;
+  padding: 2px 0 0;
 }
 
 .beacon-row {
