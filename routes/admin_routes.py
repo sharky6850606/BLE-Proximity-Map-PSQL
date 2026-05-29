@@ -80,6 +80,13 @@ def _unique_customer_slug(conn, requested_slug):
     return slug
 
 
+def _safe_log_event(*args, **kwargs):
+    try:
+        log_event(*args, **kwargs)
+    except Exception as exc:
+        print(f"[admin] audit log skipped: {exc}")
+
+
 @admin_bp.route("/")
 @admin_required
 def dashboard():
@@ -162,17 +169,19 @@ def create_customer():
             f"INSERT INTO customers (name, slug, active, created_at) VALUES ({ph},{ph},{ph},{ph})",
             (name, slug, 1, _now_label()),
         )
-        log_event(
-            "admin.create_customer",
-            target_type="customer",
-            target_id=slug,
-            details=f"Created customer {name}",
-            actor_user=current_user(),
-            conn=conn,
-        )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+    _safe_log_event(
+        "admin.create_customer",
+        target_type="customer",
+        target_id=slug,
+        details=f"Created customer {name}",
+        actor_user=current_user(),
+    )
     return redirect(url_for("admin.dashboard"))
 
 
@@ -210,34 +219,64 @@ def create_user():
     email = normalize_email(request.form.get("email"))
     password = request.form.get("password") or ""
     role = request.form.get("role") or "customer_user"
-    customer_id = request.form.get("customer_id") or None
-    if role != "admin" and not customer_id:
-        return redirect(url_for("admin.dashboard"))
+    if role not in {"admin", "customer_admin", "customer_user"}:
+        role = "customer_user"
+
+    raw_customer_id = request.form.get("customer_id") or None
+    customer_id = None
+    if role != "admin":
+        try:
+            customer_id = int(raw_customer_id) if raw_customer_id else None
+        except (TypeError, ValueError):
+            customer_id = None
+        if not customer_id:
+            return redirect(url_for("admin.dashboard"))
+
     if not email or not password:
         return redirect(url_for("admin.dashboard"))
 
     conn = get_db()
     try:
         ph = _ph(conn)
-        conn.execute(
-            f"INSERT INTO app_users (customer_id, email, password_hash, role, active, created_at) "
-            f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
-            (customer_id, email, hash_password(password), role, 1, _now_label()),
-        )
-        log_event(
-            "admin.create_user",
-            target_type="user",
-            target_id=email,
-            details=f"Created {role} account {email}",
-            actor_user=current_user(),
-            customer_id=customer_id,
-            conn=conn,
-        )
+        existing = conn.execute(
+            f"SELECT id, customer_id, role, active FROM app_users WHERE email = {ph} AND deleted_at IS NULL",
+            (email,),
+        ).fetchone()
+        password_hash = hash_password(password)
+        if existing:
+            conn.execute(
+                f"UPDATE app_users SET customer_id = {ph}, password_hash = {ph}, role = {ph}, "
+                f"active = {ph}, force_password_reset = 0 WHERE id = {ph}",
+                (customer_id, password_hash, role, 1, existing[0]),
+            )
+            action = "admin.update_user"
+            details = f"Updated existing {role} account {email}"
+            target_id = existing[0]
+        else:
+            conn.execute(
+                f"INSERT INTO app_users (customer_id, email, password_hash, role, active, created_at) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
+                (customer_id, email, password_hash, role, 1, _now_label()),
+            )
+            action = "admin.create_user"
+            details = f"Created {role} account {email}"
+            target_id = email
+
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+    _safe_log_event(
+        action,
+        target_type="user",
+        target_id=target_id,
+        details=details,
+        actor_user=current_user(),
+        customer_id=customer_id,
+    )
     return redirect(url_for("admin.dashboard"))
-
 
 @admin_bp.route("/users/<int:user_id>/toggle", methods=["POST"])
 @admin_required
