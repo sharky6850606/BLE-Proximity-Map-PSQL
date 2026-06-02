@@ -69,15 +69,23 @@ def _ensure_email_logs_table(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
 
 
-def _unique_customer_slug(conn, requested_slug):
+def _unique_customer_slug(conn, requested_slug, exclude_customer_id=None):
     base = _slugify(requested_slug)
     slug = base
     suffix = 2
     ph = _ph(conn)
-    while conn.execute(f"SELECT 1 FROM customers WHERE slug = {ph} LIMIT 1", (slug,)).fetchone():
+    while True:
+        if exclude_customer_id is None:
+            exists = conn.execute(f"SELECT 1 FROM customers WHERE slug = {ph} LIMIT 1", (slug,)).fetchone()
+        else:
+            exists = conn.execute(
+                f"SELECT 1 FROM customers WHERE slug = {ph} AND id <> {ph} LIMIT 1",
+                (slug, exclude_customer_id),
+            ).fetchone()
+        if not exists:
+            return slug
         slug = f"{base}-{suffix}"
         suffix += 1
-    return slug
 
 
 def _safe_log_event(*args, **kwargs):
@@ -98,12 +106,12 @@ def dashboard():
             "SELECT id, name, slug, active, created_at FROM customers ORDER BY name"
         ).fetchall()
         users = conn.execute(
-            "SELECT u.id, u.email, u.role, u.active, c.name, u.last_login_at "
+            "SELECT u.id, u.email, u.role, u.active, c.name, u.last_login_at, u.customer_id "
             "FROM app_users u LEFT JOIN customers c ON c.id = u.customer_id "
             "WHERE u.deleted_at IS NULL ORDER BY u.id DESC LIMIT 100"
         ).fetchall()
         devices = conn.execute(
-            "SELECT cd.id, c.name, cd.device_ident, COALESCE(cds.name, cd.label, d.name, cd.device_ident) AS label, cd.created_at "
+            "SELECT cd.id, c.name, cd.device_ident, COALESCE(cds.name, cd.label, d.name, cd.device_ident) AS label, cd.created_at, cd.customer_id "
             "FROM customer_devices cd "
             "JOIN customers c ON c.id = cd.customer_id "
             "LEFT JOIN customer_device_settings cds ON cds.customer_id = cd.customer_id AND cds.device_ident = cd.device_ident "
@@ -119,7 +127,7 @@ def dashboard():
         ).fetchall()
         assets = conn.execute(
             "SELECT ca.id, c.name, ca.beacon_id, COALESCE(ca.name, ca.beacon_id), ca.expected_device_ident, "
-            "ca.active, ca.status, ca.missing_since, ca.found_at "
+            "ca.active, ca.status, ca.missing_since, ca.found_at, ca.customer_id "
             "FROM customer_assets ca JOIN customers c ON c.id = ca.customer_id "
             "ORDER BY c.name, COALESCE(ca.name, ca.beacon_id)"
         ).fetchall()
@@ -181,6 +189,38 @@ def create_customer():
         target_id=slug,
         details=f"Created customer {name}",
         actor_user=current_user(),
+    )
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.route("/customers/<int:customer_id>/edit", methods=["POST"])
+@admin_required
+def update_customer(customer_id):
+    name = (request.form.get("name") or "").strip()
+    requested_slug = request.form.get("slug") or name
+    if not name:
+        return redirect(url_for("admin.dashboard"))
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        slug = _unique_customer_slug(conn, requested_slug, exclude_customer_id=customer_id)
+        conn.execute(
+            f"UPDATE customers SET name = {ph}, slug = {ph} WHERE id = {ph}",
+            (name, slug, customer_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _safe_log_event(
+        "admin.update_customer",
+        target_type="customer",
+        target_id=customer_id,
+        details=f"Updated customer {name}",
+        actor_user=current_user(),
+        customer_id=customer_id,
     )
     return redirect(url_for("admin.dashboard"))
 
@@ -278,6 +318,58 @@ def create_user():
     )
     return redirect(url_for("admin.dashboard"))
 
+
+@admin_bp.route("/users/<int:user_id>/edit", methods=["POST"])
+@admin_required
+def update_user(user_id):
+    email = normalize_email(request.form.get("email"))
+    role = request.form.get("role") or "customer_user"
+    if role not in {"admin", "customer_admin", "customer_user"}:
+        role = "customer_user"
+    raw_customer_id = request.form.get("customer_id") or None
+    customer_id = None
+    if role != "admin":
+        try:
+            customer_id = int(raw_customer_id) if raw_customer_id else None
+        except (TypeError, ValueError):
+            customer_id = None
+        if not customer_id:
+            return redirect(url_for("admin.dashboard"))
+    if not email:
+        return redirect(url_for("admin.dashboard"))
+
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        duplicate = conn.execute(
+            f"SELECT id FROM app_users WHERE email = {ph} AND id <> {ph} AND deleted_at IS NULL",
+            (email, user_id),
+        ).fetchone()
+        if not duplicate:
+            conn.execute(
+                f"UPDATE app_users SET email = {ph}, role = {ph}, customer_id = {ph} WHERE id = {ph}",
+                (email, role, customer_id, user_id),
+            )
+            conn.commit()
+        else:
+            conn.rollback()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if not duplicate:
+        _safe_log_event(
+            "admin.update_user",
+            target_type="user",
+            target_id=user_id,
+            details=f"Updated user {email}",
+            actor_user=current_user(),
+            customer_id=customer_id,
+        )
+    return redirect(url_for("admin.dashboard"))
+
+
 @admin_bp.route("/users/<int:user_id>/toggle", methods=["POST"])
 @admin_required
 def toggle_user(user_id):
@@ -367,6 +459,47 @@ def assign_device():
     return redirect(url_for("admin.dashboard"))
 
 
+@admin_bp.route("/devices/<int:assignment_id>/edit", methods=["POST"])
+@admin_required
+def update_device_assignment(assignment_id):
+    customer_id = request.form.get("customer_id")
+    device_ident = (request.form.get("device_ident") or "").strip()
+    label = (request.form.get("label") or "").strip() or None
+    if not customer_id or not device_ident:
+        return redirect(url_for("admin.dashboard"))
+
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        conflict = conn.execute(
+            f"SELECT id FROM customer_devices WHERE customer_id = {ph} AND device_ident = {ph} AND id <> {ph}",
+            (customer_id, device_ident, assignment_id),
+        ).fetchone()
+        if conflict:
+            conn.execute(f"UPDATE customer_devices SET label = {ph} WHERE id = {ph}", (label, conflict[0]))
+            conn.execute(f"DELETE FROM customer_devices WHERE id = {ph}", (assignment_id,))
+        else:
+            conn.execute(
+                f"UPDATE customer_devices SET customer_id = {ph}, device_ident = {ph}, label = {ph} WHERE id = {ph}",
+                (customer_id, device_ident, label, assignment_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _safe_log_event(
+        "admin.update_device_assignment",
+        target_type="device",
+        target_id=device_ident,
+        details=f"Updated device assignment {device_ident}" + (f" as {label}" if label else ""),
+        actor_user=current_user(),
+        customer_id=customer_id,
+    )
+    return redirect(url_for("admin.dashboard"))
+
+
 @admin_bp.route("/devices/<int:assignment_id>/remove", methods=["POST"])
 @admin_required
 def remove_device(assignment_id):
@@ -424,6 +557,51 @@ def create_asset():
         conn.commit()
     finally:
         conn.close()
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.route("/assets/<int:asset_id>/edit", methods=["POST"])
+@admin_required
+def update_asset(asset_id):
+    customer_id = request.form.get("customer_id")
+    beacon_id = (request.form.get("beacon_id") or "").strip()
+    name = (request.form.get("name") or "").strip() or None
+    expected_device_ident = (request.form.get("expected_device_ident") or "").strip() or None
+    if not customer_id or not beacon_id:
+        return redirect(url_for("admin.dashboard"))
+
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        conflict = conn.execute(
+            f"SELECT id FROM customer_assets WHERE customer_id = {ph} AND beacon_id = {ph} AND id <> {ph}",
+            (customer_id, beacon_id, asset_id),
+        ).fetchone()
+        if conflict:
+            conn.execute(
+                f"UPDATE customer_assets SET name = {ph}, expected_device_ident = {ph}, active = {ph} WHERE id = {ph}",
+                (name, expected_device_ident, 1, conflict[0]),
+            )
+            conn.execute(f"DELETE FROM customer_assets WHERE id = {ph}", (asset_id,))
+        else:
+            conn.execute(
+                f"UPDATE customer_assets SET customer_id = {ph}, beacon_id = {ph}, name = {ph}, expected_device_ident = {ph} WHERE id = {ph}",
+                (customer_id, beacon_id, name, expected_device_ident, asset_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _safe_log_event(
+        "admin.update_expected_asset",
+        target_type="asset",
+        target_id=beacon_id,
+        details=f"Updated expected asset {name or beacon_id}",
+        actor_user=current_user(),
+        customer_id=customer_id,
+    )
     return redirect(url_for("admin.dashboard"))
 
 

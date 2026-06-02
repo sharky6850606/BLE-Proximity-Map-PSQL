@@ -173,6 +173,43 @@
     .reset-form button { margin: 0; min-height: 32px; }
     .actions-cell { min-width: 190px; }
 
+
+    .edit-panel { margin-top: 0; }
+    .edit-panel summary {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #334155;
+      border-radius: 7px;
+      padding: 7px 10px;
+      color: #bfdbfe;
+      background: #0f172a;
+      font-weight: 800;
+      list-style: none;
+      min-height: 28px;
+      font-size: 0.76rem;
+    }
+    .edit-panel summary::-webkit-details-marker { display: none; }
+    .edit-panel summary:hover { background: #1e293b; }
+    .edit-form {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid #273449;
+      border-radius: 10px;
+      background: #020617;
+      min-width: min(720px, calc(100vw - 80px));
+    }
+    .edit-form label { margin: 0; font-size: .75rem; color: #bfdbfe; }
+    .edit-form input,
+    .edit-form select { width: 100%; margin-top: 4px; }
+    .edit-form .edit-form-actions { display: flex; align-items: end; gap: 8px; }
+    .edit-form .edit-form-actions button { margin: 0; }
+    .action-stack { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -440,9 +477,19 @@
               <td>{{ "Active" if c[3] else "Suspended" }}</td>
               <td>{{ c[4] }}</td>
               <td>
-                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_customer', customer_id=c[0]) }}">
-                  <button class="{{ 'danger' if c[3] else '' }}" type="submit">{{ "Suspend" if c[3] else "Reactivate" }}</button>
-                </form>
+                <div class="action-stack">
+                  <form class="inline-form" method="post" action="{{ url_for('admin.toggle_customer', customer_id=c[0]) }}">
+                    <button class="{{ 'danger' if c[3] else '' }}" type="submit">{{ "Suspend" if c[3] else "Reactivate" }}</button>
+                  </form>
+                  <details class="edit-panel">
+                    <summary>Edit</summary>
+                    <form class="edit-form" method="post" action="{{ url_for('admin.update_customer', customer_id=c[0]) }}">
+                      <label>Name<input name="name" value="{{ c[1] }}" required /></label>
+                      <label>Slug<input name="slug" value="{{ c[2] }}" /></label>
+                      <div class="edit-form-actions"><button type="submit">Save changes</button></div>
+                    </form>
+                  </details>
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -467,13 +514,37 @@
               <td>{{ "Active" if u[3] else "Suspended" }}</td>
               <td>{{ u[5] or "Never" }}</td>
               <td>
-                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_user', user_id=u[0]) }}">
-                  <button class="{{ 'danger' if u[3] else '' }}" type="submit">{{ "Suspend" if u[3] else "Reactivate" }}</button>
-                </form>
-                <form class="reset-form" method="post" action="{{ url_for('admin.reset_user_password', user_id=u[0]) }}">
-                  <input name="password" placeholder="new password" />
-                  <button type="submit">Reset</button>
-                </form>
+                <div class="action-stack">
+                  <form class="inline-form" method="post" action="{{ url_for('admin.toggle_user', user_id=u[0]) }}">
+                    <button class="{{ 'danger' if u[3] else '' }}" type="submit">{{ "Suspend" if u[3] else "Reactivate" }}</button>
+                  </form>
+                  <form class="reset-form" method="post" action="{{ url_for('admin.reset_user_password', user_id=u[0]) }}">
+                    <input name="password" placeholder="new password" />
+                    <button type="submit">Reset</button>
+                  </form>
+                  <details class="edit-panel">
+                    <summary>Edit</summary>
+                    <form class="edit-form" method="post" action="{{ url_for('admin.update_user', user_id=u[0]) }}">
+                      <label>Email<input name="email" type="email" value="{{ u[1] }}" required /></label>
+                      <label>Customer
+                        <select name="customer_id">
+                          <option value="" {% if not u[6] %}selected{% endif %}>Internal admin</option>
+                          {% for c in customers if c[3] %}
+                          <option value="{{ c[0] }}" {% if u[6] == c[0] %}selected{% endif %}>{{ c[1] }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Role
+                        <select name="role">
+                          <option value="customer_user" {% if u[2] == 'customer_user' %}selected{% endif %}>Customer user</option>
+                          <option value="customer_admin" {% if u[2] == 'customer_admin' %}selected{% endif %}>Customer admin</option>
+                          <option value="admin" {% if u[2] == 'admin' %}selected{% endif %}>Internal admin</option>
+                        </select>
+                      </label>
+                      <div class="edit-form-actions"><button type="submit">Save changes</button></div>
+                    </form>
+                  </details>
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -497,9 +568,26 @@
               <td>{{ d[3] or "" }}</td>
               <td>{{ d[4] }}</td>
               <td>
-                <form class="inline-form" method="post" action="{{ url_for('admin.remove_device', assignment_id=d[0]) }}">
-                  <button class="danger" type="submit">Remove</button>
-                </form>
+                <div class="action-stack">
+                  <form class="inline-form" method="post" action="{{ url_for('admin.remove_device', assignment_id=d[0]) }}">
+                    <button class="danger" type="submit">Remove</button>
+                  </form>
+                  <details class="edit-panel">
+                    <summary>Edit</summary>
+                    <form class="edit-form" method="post" action="{{ url_for('admin.update_device_assignment', assignment_id=d[0]) }}">
+                      <label>Customer
+                        <select name="customer_id" required>
+                          {% for c in customers if c[3] %}
+                          <option value="{{ c[0] }}" {% if d[5] == c[0] %}selected{% endif %}>{{ c[1] }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Device IMEI / ident<input name="device_ident" value="{{ d[2] }}" required /></label>
+                      <label>Label<input name="label" value="{{ d[3] or '' }}" /></label>
+                      <div class="edit-form-actions"><button type="submit">Save changes</button></div>
+                    </form>
+                  </details>
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -546,9 +634,27 @@
               <td>{{ a[4] or "Any assigned device" }}</td>
               <td>{{ a[6] or "unknown" }}{% if a[7] %}<div class="muted">Missing since {{ a[7] }}</div>{% endif %}{% if a[8] %}<div class="muted">Found {{ a[8] }}</div>{% endif %}</td>
               <td>
-                <form class="inline-form" method="post" action="{{ url_for('admin.toggle_asset', asset_id=a[0]) }}">
-                  <button class="{{ 'danger' if a[5] else '' }}" type="submit">{{ "Deactivate" if a[5] else "Reactivate" }}</button>
-                </form>
+                <div class="action-stack">
+                  <form class="inline-form" method="post" action="{{ url_for('admin.toggle_asset', asset_id=a[0]) }}">
+                    <button class="{{ 'danger' if a[5] else '' }}" type="submit">{{ "Deactivate" if a[5] else "Reactivate" }}</button>
+                  </form>
+                  <details class="edit-panel">
+                    <summary>Edit</summary>
+                    <form class="edit-form" method="post" action="{{ url_for('admin.update_asset', asset_id=a[0]) }}">
+                      <label>Customer
+                        <select name="customer_id" required>
+                          {% for c in customers if c[3] %}
+                          <option value="{{ c[0] }}" {% if a[9] == c[0] %}selected{% endif %}>{{ c[1] }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Asset name<input name="name" value="{{ a[3] }}" /></label>
+                      <label>Beacon ID<input name="beacon_id" value="{{ a[2] }}" required /></label>
+                      <label>Expected device<input name="expected_device_ident" value="{{ a[4] or '' }}" placeholder="blank means any assigned device" /></label>
+                      <div class="edit-form-actions"><button type="submit">Save changes</button></div>
+                    </form>
+                  </details>
+                </div>
               </td>
             </tr>
             {% endfor %}
