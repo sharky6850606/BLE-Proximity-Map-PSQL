@@ -573,6 +573,7 @@ function renderNotificationsList() {
     if (n.type === 'left') typeClass = 'left';
     else if (n.type === 'in' || n.type === 'found') typeClass = 'in';
     else if (n.type === 'offline') typeClass = 'offline';
+    else if (n.type === 'equipment_moved') typeClass = 'alert';
     else if (n.type === 'still_in' || n.type === 'still_out' || n.type === 'status') typeClass = 'status';
     else if (n.type === 'missing' || n.type === 'not_in_last_packet') typeClass = 'offline';
     else if (n.type === 'online') typeClass = 'online';
@@ -602,6 +603,7 @@ function showToast(msg) {
   if (msg.type === 'left') cls += ' toast-left';
   else if (msg.type === 'in' || msg.type === 'found') cls += ' toast-in';
   else if (msg.type === 'offline') cls += ' toast-offline';
+  else if (msg.type === 'equipment_moved') cls += ' toast-alert';
   else if (msg.type === 'online') cls += ' toast-online';
   else if (msg.type === 'still_in' || msg.type === 'still_out' || msg.type === 'status') cls += ' toast-status';
   else if (msg.type === 'missing' || msg.type === 'not_in_last_packet') cls += ' toast-offline';
@@ -609,7 +611,9 @@ function showToast(msg) {
 
   el.className = cls.trim();
 
-  const label = msg.type === 'not_in_last_packet' ? 'WAS NOT IN LAST PACKET SENT' : msg.type.toUpperCase();
+  const label = msg.type === 'not_in_last_packet'
+    ? 'WAS NOT IN LAST PACKET SENT'
+    : (msg.type === 'equipment_moved' ? 'EQUIPMENT MOVED' : msg.type.toUpperCase());
   let text = `${label}: ${msg.name}`;
   if ((msg.type === 'distance' || msg.type === 'signal') && msg.distance != null) {
     try {

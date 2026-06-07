@@ -69,10 +69,29 @@ def _fmt_ts(ts):
 def _get_customer_devices(conn, customer_id):
     ph = _ph(conn)
     rows = conn.execute(
-        f"SELECT device_ident FROM customer_devices WHERE customer_id = {ph}",
+        f"SELECT device_ident FROM customer_devices WHERE customer_id = {ph} ORDER BY device_ident",
         (customer_id,),
     ).fetchall()
     return [str(r[0]) for r in rows if r and r[0]]
+
+
+def _get_customer_device_labels(conn, customer_id):
+    ph = _ph(conn)
+    rows = conn.execute(
+        f"SELECT cd.device_ident, COALESCE(cds.name, cd.label, d.name, cd.device_ident) AS label "
+        f"FROM customer_devices cd "
+        f"LEFT JOIN customer_device_settings cds ON cds.customer_id = cd.customer_id AND cds.device_ident = cd.device_ident "
+        f"LEFT JOIN devices d ON d.id = cd.device_ident "
+        f"WHERE cd.customer_id = {ph} ORDER BY COALESCE(cds.name, cd.label, d.name, cd.device_ident)",
+        (customer_id,),
+    ).fetchall()
+    return {str(r[0]): str(r[1] or r[0]) for r in rows if r and r[0]}
+
+
+def _device_label(device_ident, device_labels):
+    if not device_ident:
+        return ""
+    return device_labels.get(str(device_ident), str(device_ident))
 
 
 def _latest_observation(conn, beacon_id, device_idents, start_ts, end_ts):
@@ -87,6 +106,24 @@ def _latest_observation(conn, beacon_id, device_idents, start_ts, end_ts):
         f"AND observed_ts >= {ph} AND observed_ts <= {ph} "
         "ORDER BY observed_ts DESC LIMIT 1",
         (beacon_id,) + tuple(device_idents) + (start_ts, end_ts),
+    ).fetchone()
+
+
+def _latest_observation_excluding(conn, beacon_id, device_idents, excluded_idents, start_ts, end_ts):
+    candidates = [str(d) for d in device_idents if d and str(d) not in {str(e) for e in excluded_idents if e}]
+    return _latest_observation(conn, beacon_id, candidates, start_ts, end_ts)
+
+
+def _latest_observation_on_device_before(conn, beacon_id, device_ident, end_ts):
+    if not device_ident:
+        return None
+    ph = _ph(conn)
+    return conn.execute(
+        f"SELECT observed_ts, device_ident, distance, rssi "
+        f"FROM beacon_observations "
+        f"WHERE beacon_id = {ph} AND device_ident = {ph} AND observed_ts <= {ph} "
+        "ORDER BY observed_ts DESC LIMIT 1",
+        (beacon_id, device_ident, end_ts),
     ).fetchone()
 
 
@@ -105,7 +142,29 @@ def _insert_audit_run(conn, customer_id, scheduled_for, window_start, window_end
     return row[0] if row else None
 
 
-def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, window_end, results):
+def _status_label(status):
+    if status == "present":
+        return "In range"
+    if status == "equipment_moved":
+        return "Equipment moved"
+    return "Missing"
+
+
+def _status_color(status):
+    if status == "present":
+        return colors.HexColor("#dcfce7")
+    if status == "equipment_moved":
+        return colors.HexColor("#fef3c7")
+    return colors.HexColor("#fee2e2")
+
+
+def _section_title(device_ident, device_labels):
+    if device_ident == "__unassigned__":
+        return "Unassigned / Any assigned device"
+    return _device_label(device_ident, device_labels)
+
+
+def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, window_end, results, device_labels):
     doc = SimpleDocTemplate(
         pdf_path,
         pagesize=landscape(A4),
@@ -115,50 +174,73 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
         bottomMargin=24,
     )
     styles = getSampleStyleSheet()
-    present_count = sum(1 for r in results if r["status"] == "present")
-    missing_count = sum(1 for r in results if r["status"] == "missing")
+    summary_statuses = {}
+    for r in results:
+        summary_statuses.setdefault(r.get("asset_id") or r.get("beacon_id"), r["status"])
+    present_count = sum(1 for status in summary_statuses.values() if status == "present")
+    missing_count = sum(1 for status in summary_statuses.values() if status == "missing")
+    moved_count = sum(1 for status in summary_statuses.values() if status == "equipment_moved")
 
     story = [
         Paragraph("Daily Equipment Audit", styles["Title"]),
         Paragraph(f"Customer: {_paragraph_text(customer_name)}", styles["Normal"]),
         Paragraph(f"Scheduled: {_paragraph_text(scheduled_for)} Samoa time", styles["Normal"]),
         Paragraph(f"Scan window: {_paragraph_text(window_start)} to {_paragraph_text(window_end)}", styles["Normal"]),
-        Paragraph(f"Summary: {present_count} present, {missing_count} missing, {len(results)} total assets", styles["Normal"]),
+        Paragraph(
+            f"Summary: {present_count} present, {moved_count} equipment moved, "
+            f"{missing_count} missing, {len(summary_statuses)} total assets",
+            styles["Normal"],
+        ),
         Spacer(1, 12),
     ]
 
-    table_data = [[
-        Paragraph("Asset", styles["BodyText"]),
-        Paragraph("Beacon ID", styles["BodyText"]),
-        Paragraph("Status", styles["BodyText"]),
-        Paragraph("Last seen", styles["BodyText"]),
-        Paragraph("Device", styles["BodyText"]),
-        Paragraph("RSSI", styles["BodyText"]),
-        Paragraph("Distance", styles["BodyText"]),
-        Paragraph("Missing since", styles["BodyText"]),
-    ]]
+    grouped = {}
     for r in results:
-        table_data.append([
-            Paragraph(_paragraph_text(r["asset_name"]), styles["BodyText"]),
-            Paragraph(_paragraph_text(r["beacon_id"]), styles["BodyText"]),
-            Paragraph(_paragraph_text("In range" if r["status"] == "present" else "Missing"), styles["BodyText"]),
-            Paragraph(_paragraph_text(r.get("last_seen") or ""), styles["BodyText"]),
-            Paragraph(_paragraph_text(r.get("device_ident") or ""), styles["BodyText"]),
-            Paragraph(_paragraph_text(r.get("rssi") if r.get("rssi") is not None else ""), styles["BodyText"]),
-            Paragraph(_paragraph_text(r.get("distance_label") or ""), styles["BodyText"]),
-            Paragraph(_paragraph_text(r.get("missing_since") or ""), styles["BodyText"]),
-        ])
+        grouped.setdefault(r.get("section_device") or "__unassigned__", []).append(r)
 
-    table = Table(table_data, colWidths=[120, 190, 70, 120, 115, 50, 70, 120], repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
-    ]))
-    story.append(table)
+    section_order = sorted(grouped, key=lambda key: _section_title(key, device_labels).lower())
+    for section_key in section_order:
+        story.append(Paragraph(f"Device / Site: {_paragraph_text(_section_title(section_key, device_labels))}", styles["Heading2"]))
+        table_data = [[
+            Paragraph("Asset", styles["BodyText"]),
+            Paragraph("Beacon ID", styles["BodyText"]),
+            Paragraph("Status", styles["BodyText"]),
+            Paragraph("Expected site", styles["BodyText"]),
+            Paragraph("Detected site", styles["BodyText"]),
+            Paragraph("Last seen", styles["BodyText"]),
+            Paragraph("RSSI", styles["BodyText"]),
+            Paragraph("Distance", styles["BodyText"]),
+            Paragraph("Notes", styles["BodyText"]),
+        ]]
+        row_backgrounds = []
+        for r in grouped[section_key]:
+            note = r.get("note") or r.get("missing_since") or ""
+            table_data.append([
+                Paragraph(_paragraph_text(r["asset_name"]), styles["BodyText"]),
+                Paragraph(_paragraph_text(r["beacon_id"]), styles["BodyText"]),
+                Paragraph(_paragraph_text(_status_label(r["status"])), styles["BodyText"]),
+                Paragraph(_paragraph_text(r.get("expected_device_label") or ""), styles["BodyText"]),
+                Paragraph(_paragraph_text(r.get("actual_device_label") or ""), styles["BodyText"]),
+                Paragraph(_paragraph_text(r.get("last_seen") or ""), styles["BodyText"]),
+                Paragraph(_paragraph_text(r.get("rssi") if r.get("rssi") is not None else ""), styles["BodyText"]),
+                Paragraph(_paragraph_text(r.get("distance_label") or ""), styles["BodyText"]),
+                Paragraph(_paragraph_text(note), styles["BodyText"]),
+            ])
+            row_backgrounds.append(_status_color(r["status"]))
+
+        table = Table(table_data, colWidths=[100, 165, 80, 100, 100, 105, 40, 58, 135], repeatRows=1)
+        table_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]
+        for idx, bg in enumerate(row_backgrounds, start=1):
+            table_style.append(("BACKGROUND", (0, idx), (-1, idx), bg))
+        table.setStyle(TableStyle(table_style))
+        story.append(table)
+        story.append(Spacer(1, 14))
     doc.build(story)
 
 
@@ -187,6 +269,7 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
         conn.execute(f"DELETE FROM audit_results WHERE audit_run_id = {ph}", (audit_run_id,))
 
         customer_devices = _get_customer_devices(conn, customer_id)
+        device_labels = _get_customer_device_labels(conn, customer_id)
         assets = conn.execute(
             f"SELECT ca.id, ca.beacon_id, COALESCE(ca.name, cbn.name, ca.beacon_id), "
             f"ca.expected_device_ident, ca.status, ca.missing_since "
@@ -198,9 +281,26 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
 
         results = []
         for asset_id, beacon_id, asset_name, expected_device_ident, previous_status, previous_missing_since in assets:
-            device_scope = [str(expected_device_ident)] if expected_device_ident else customer_devices
-            obs = _latest_observation(conn, beacon_id, device_scope, start_ts, end_ts)
-            status = "present" if obs else "missing"
+            expected_device = str(expected_device_ident) if expected_device_ident else None
+            device_scope = [expected_device] if expected_device else customer_devices
+            expected_obs = _latest_observation(conn, beacon_id, device_scope, start_ts, end_ts)
+            moved_obs = None
+            if expected_device:
+                moved_obs = _latest_observation_excluding(
+                    conn,
+                    beacon_id,
+                    customer_devices,
+                    [expected_device],
+                    start_ts,
+                    end_ts,
+                )
+            obs = expected_obs or moved_obs
+            if expected_obs:
+                status = "present"
+            elif moved_obs:
+                status = "equipment_moved"
+            else:
+                status = "missing"
             last_seen_ts = obs[0] if obs else None
             last_seen_device = obs[1] if obs else None
             distance = obs[2] if obs else None
@@ -221,9 +321,25 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                     f"UPDATE customer_assets SET status={ph}, missing_since={ph}, found_at=NULL WHERE id={ph}",
                     ("missing", missing_since, asset_id),
                 )
+            elif status == "equipment_moved":
+                if previous_status != "equipment_moved":
+                    emit_notification(
+                        "equipment_moved",
+                        beacon_id,
+                        event_time=_fmt_ts(last_seen_ts) or now_label,
+                        device_ident=last_seen_device,
+                        distance=distance,
+                    )
+                moved_since = missing_since if previous_status == "equipment_moved" and missing_since else now_label
+                conn.execute(
+                    f"UPDATE customer_assets SET status={ph}, last_seen_ts={ph}, last_seen_device_ident={ph}, "
+                    f"missing_since={ph}, found_at=NULL WHERE id={ph}",
+                    ("equipment_moved", last_seen_ts, last_seen_device, moved_since, asset_id),
+                )
+                missing_since = moved_since
             else:
                 conn.execute(
-                    f"UPDATE customer_assets SET status={ph}, last_seen_ts={ph}, last_seen_device_ident={ph}, missing_since=NULL WHERE id={ph}",
+                    f"UPDATE customer_assets SET status={ph}, last_seen_ts={ph}, last_seen_device_ident={ph}, missing_since=NULL, found_at=NULL WHERE id={ph}",
                     ("present", last_seen_ts, last_seen_device, asset_id),
                 )
 
@@ -233,30 +349,94 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                 f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
                 (audit_run_id, asset_id, beacon_id, status, last_seen_ts, last_seen_device, distance, rssi),
             )
-            results.append({
+            result_row = {
+                "asset_id": asset_id,
                 "asset_name": asset_name,
                 "beacon_id": beacon_id,
                 "status": status,
                 "last_seen": _fmt_ts(last_seen_ts),
+                "last_seen_ts": last_seen_ts,
                 "device_ident": last_seen_device,
+                "expected_device_ident": expected_device,
+                "expected_device_label": _device_label(expected_device, device_labels) if expected_device else "Any assigned device",
+                "actual_device_label": _device_label(last_seen_device, device_labels) if last_seen_device else "",
+                "section_device": last_seen_device if status == "equipment_moved" else (expected_device or "__unassigned__"),
                 "distance_label": f"{float(distance):.2f} m" if distance is not None else "",
                 "rssi": rssi,
-                "missing_since": missing_since if status == "missing" else "",
-            })
+                "missing_since": missing_since if status in ("missing", "equipment_moved") else "",
+                "note": (
+                    f"Expected at {_device_label(expected_device, device_labels)}; "
+                    f"detected at {_device_label(last_seen_device, device_labels)}"
+                    if status == "equipment_moved" else
+                    (f"Missing since {missing_since}" if status == "missing" and missing_since else "")
+                ),
+            }
+            if status == "equipment_moved" and expected_device:
+                expected_last_obs = _latest_observation_on_device_before(conn, beacon_id, expected_device, end_ts)
+                expected_last_seen_ts = expected_last_obs[0] if expected_last_obs else None
+                results.append({
+                    **result_row,
+                    "last_seen": _fmt_ts(expected_last_seen_ts),
+                    "last_seen_ts": expected_last_seen_ts,
+                    "device_ident": expected_device,
+                    "actual_device_label": _device_label(last_seen_device, device_labels),
+                    "section_device": expected_device,
+                    "distance_label": "",
+                    "rssi": "",
+                    "note": (
+                        f"Moved to {_device_label(last_seen_device, device_labels)}. "
+                        f"Last seen here {_fmt_ts(expected_last_seen_ts) or 'not recorded'}."
+                    ),
+                })
+                results.append({
+                    **result_row,
+                    "section_device": last_seen_device,
+                    "note": (
+                        f"Detected here; expected at {_device_label(expected_device, device_labels)}."
+                    ),
+                })
+            else:
+                results.append(result_row)
 
         safe_customer = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(customer_id))
         safe_ts = scheduled_for.replace(":", "-").replace(" ", "_")
         out_dir = _ensure_dir(AUDIT_REPORTS_DIR)
         pdf_path = os.path.join(out_dir, f"audit_customer_{safe_customer}_{safe_ts}.pdf")
-        _write_audit_pdf(pdf_path, customer[1], scheduled_for, window_start_label, window_end_label, results)
+        _write_audit_pdf(pdf_path, customer[1], scheduled_for, window_start_label, window_end_label, results, device_labels)
 
         conn.execute(
             f"UPDATE audit_runs SET status={ph}, pdf_path={ph} WHERE id={ph}",
             ("complete", pdf_path, audit_run_id),
         )
+        recipients = [
+            r[0] for r in conn.execute(
+                f"SELECT email FROM app_users WHERE customer_id = {ph} AND active = 1 AND deleted_at IS NULL",
+                (customer_id,),
+            ).fetchall()
+        ]
         conn.commit()
     finally:
         conn.close()
+
+    sent = send_report_email(
+        recipients,
+        f"Daily Equipment Audit - {scheduled_for}",
+        f"Attached is the daily equipment audit for {customer[1]}.\n\n"
+        f"Scan window: {window_start_label} to {window_end_label} Samoa time.\n"
+        f"Assets checked: {len(results)}.",
+        attachment_path=pdf_path,
+    )
+    if sent:
+        conn = get_db()
+        try:
+            ph = _ph(conn)
+            conn.execute(
+                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
+                (format_samoa_time(time.time()), audit_run_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     return pdf_path
 
@@ -422,22 +602,27 @@ def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance
     """Mark a customer's expected asset found when live telemetry sees it again."""
     ph = _ph(conn)
     rows = conn.execute(
-        f"SELECT ca.id, ca.customer_id, ca.name, ca.status "
+        f"SELECT ca.id, ca.customer_id, ca.name, ca.status, ca.expected_device_ident "
         f"FROM customer_assets ca "
         f"JOIN customer_devices cd ON cd.customer_id = ca.customer_id AND cd.device_ident = {ph} "
-        f"WHERE ca.beacon_id = {ph} AND ca.active = 1 AND ca.status = {ph}",
-        (device_ident, beacon_id, "missing"),
+        f"WHERE ca.beacon_id = {ph} AND ca.active = 1 AND ca.status IN ({ph},{ph})",
+        (device_ident, beacon_id, "missing", "equipment_moved"),
     ).fetchall()
 
-    for asset_id, _customer_id, asset_name, _status in rows:
+    for asset_id, _customer_id, asset_name, _status, expected_device_ident in rows:
         found_at = format_samoa_time(seen_ts)
+        expected_device = str(expected_device_ident) if expected_device_ident else None
+        moved = expected_device and str(device_ident) != expected_device
+        new_status = "equipment_moved" if moved else "present"
+        missing_since_expr = "missing_since" if moved else "NULL"
+        found_at_value = None if moved else found_at
         conn.execute(
-            f"UPDATE customer_assets SET status={ph}, found_at={ph}, missing_since=NULL, "
+            f"UPDATE customer_assets SET status={ph}, found_at={ph}, missing_since={missing_since_expr}, "
             f"last_seen_ts={ph}, last_seen_device_ident={ph} WHERE id={ph}",
-            ("present", found_at, int(seen_ts), device_ident, asset_id),
+            (new_status, found_at_value, int(seen_ts), device_ident, asset_id),
         )
         emit_notification(
-            "found",
+            "equipment_moved" if moved else "found",
             beacon_id,
             event_time=found_at,
             device_ident=device_ident,
