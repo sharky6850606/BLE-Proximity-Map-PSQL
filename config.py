@@ -47,3 +47,10 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() not in ("0", "false", "no", "off")
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0").strip().lower() in ("1", "true", "yes", "on")
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
+
+# =============================
+# n8n / WhatsApp audit delivery
+# =============================
+N8N_WHATSAPP_WEBHOOK_URL = os.getenv("N8N_WHATSAPP_WEBHOOK_URL", "").strip()
+N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "").strip()
+N8N_WEBHOOK_TIMEOUT = int(os.getenv("N8N_WEBHOOK_TIMEOUT", "20"))

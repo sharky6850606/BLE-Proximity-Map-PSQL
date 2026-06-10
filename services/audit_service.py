@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from config import (
@@ -23,6 +23,7 @@ from services.beacon_logic import format_samoa_time
 from services.email_service import send_report_email_with_results
 from services.notifications_service import emit_notification
 from services.reporting_service import _paragraph_text
+from services.webhook_service import send_whatsapp_audit_webhook
 
 
 def _ph(conn):
@@ -45,17 +46,50 @@ def _unix_from_local_dt(local_dt):
     return int(utc_dt.timestamp())
 
 
-def _audit_schedule_for_day(local_dt=None):
+def _parse_clock(value, fallback_hour, fallback_minute):
+    try:
+        hour_text, minute_text = str(value or "").strip().split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return hour, minute
+    except (TypeError, ValueError):
+        pass
+    return fallback_hour, fallback_minute
+
+
+def _audit_schedule_for_day(local_dt=None, audit_time=None):
     local_dt = local_dt or _local_dt_from_unix()
-    scheduled = local_dt.replace(hour=AUDIT_HOUR, minute=AUDIT_MINUTE, second=0, microsecond=0)
+    hour, minute = _parse_clock(audit_time, AUDIT_HOUR, AUDIT_MINUTE)
+    scheduled = local_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
     start = scheduled - timedelta(minutes=AUDIT_WINDOW_BEFORE_MIN)
     end = scheduled + timedelta(minutes=AUDIT_WINDOW_AFTER_MIN)
     return scheduled, start, end
 
 
-def _audit_email_time_for_day(local_dt=None):
+def _audit_email_time_for_day(local_dt=None, delivery_time=None):
     local_dt = local_dt or _local_dt_from_unix()
-    return local_dt.replace(hour=AUDIT_EMAIL_HOUR, minute=AUDIT_EMAIL_MINUTE, second=0, microsecond=0)
+    hour, minute = _parse_clock(delivery_time, AUDIT_EMAIL_HOUR, AUDIT_EMAIL_MINUTE)
+    return local_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def _delivery_time_for_audit(scheduled, delivery_time=None):
+    delivery = _audit_email_time_for_day(scheduled, delivery_time)
+    if delivery <= scheduled:
+        delivery += timedelta(days=1)
+    return delivery
+
+
+def _split_recipients(value):
+    cleaned = str(value or "").replace(";", ",").replace("\n", ",")
+    seen = set()
+    recipients = []
+    for item in cleaned.split(","):
+        recipient = item.strip()
+        if recipient and recipient not in seen:
+            recipients.append(recipient)
+            seen.add(recipient)
+    return recipients
 
 
 def _fmt_local_dt(dt):
@@ -129,6 +163,12 @@ def _latest_observation_on_device_before(conn, beacon_id, device_ident, end_ts):
 
 def _insert_audit_run(conn, customer_id, scheduled_for, window_start, window_end):
     ph = _ph(conn)
+    existing = conn.execute(
+        f"SELECT id FROM audit_runs WHERE customer_id = {ph} AND scheduled_for = {ph}",
+        (customer_id, scheduled_for),
+    ).fetchone()
+    if existing:
+        return None
     conn.execute(
         f"INSERT INTO audit_runs (customer_id, scheduled_for, scan_window_start, scan_window_end, status, created_at) "
         f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph}) "
@@ -174,6 +214,29 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
         bottomMargin=24,
     )
     styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle(
+        "AuditCell",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=7,
+        leading=8.5,
+        spaceAfter=0,
+    )
+    detail_style = ParagraphStyle(
+        "AuditDetail",
+        parent=cell_style,
+        textColor=colors.HexColor("#475569"),
+        fontSize=6.3,
+        leading=7.5,
+    )
+    heading_style = ParagraphStyle(
+        "AuditSection",
+        parent=styles["Heading2"],
+        fontSize=12,
+        leading=14,
+        spaceBefore=5,
+        spaceAfter=6,
+    )
     summary_statuses = {}
     for r in results:
         summary_statuses.setdefault(r.get("asset_id") or r.get("beacon_id"), r["status"])
@@ -200,41 +263,59 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
 
     section_order = sorted(grouped, key=lambda key: _section_title(key, device_labels).lower())
     for section_key in section_order:
-        story.append(Paragraph(f"Device / Site: {_paragraph_text(_section_title(section_key, device_labels))}", styles["Heading2"]))
+        story.append(Paragraph(
+            f"Device / Site: {_paragraph_text(_section_title(section_key, device_labels))}",
+            heading_style,
+        ))
         table_data = [[
-            Paragraph("Asset", styles["BodyText"]),
-            Paragraph("Beacon ID", styles["BodyText"]),
-            Paragraph("Status", styles["BodyText"]),
-            Paragraph("Expected site", styles["BodyText"]),
-            Paragraph("Detected site", styles["BodyText"]),
-            Paragraph("Last seen", styles["BodyText"]),
-            Paragraph("RSSI", styles["BodyText"]),
-            Paragraph("Distance", styles["BodyText"]),
-            Paragraph("Notes", styles["BodyText"]),
+            Paragraph("Asset / Beacon", cell_style),
+            Paragraph("Status", cell_style),
+            Paragraph("Expected site", cell_style),
+            Paragraph("Detected / Last seen", cell_style),
+            Paragraph("Signal", cell_style),
+            Paragraph("Details", cell_style),
         ]]
         row_backgrounds = []
         for r in grouped[section_key]:
             note = r.get("note") or r.get("missing_since") or ""
+            asset_cell = (
+                f"<b>{_paragraph_text(r['asset_name'])}</b><br/>"
+                f"<font size='6' color='#475569'>{_paragraph_text(r['beacon_id'])}</font>"
+            )
+            detected_cell = _paragraph_text(r.get("actual_device_label") or "")
+            if r.get("last_seen"):
+                detected_cell += f"<br/><font size='6' color='#475569'>{_paragraph_text(r['last_seen'])}</font>"
+            signal_parts = []
+            if r.get("rssi") not in (None, ""):
+                signal_parts.append(f"{_paragraph_text(r['rssi'])} dBm")
+            if r.get("distance_label"):
+                signal_parts.append(_paragraph_text(r["distance_label"]))
             table_data.append([
-                Paragraph(_paragraph_text(r["asset_name"]), styles["BodyText"]),
-                Paragraph(_paragraph_text(r["beacon_id"]), styles["BodyText"]),
-                Paragraph(_paragraph_text(_status_label(r["status"])), styles["BodyText"]),
-                Paragraph(_paragraph_text(r.get("expected_device_label") or ""), styles["BodyText"]),
-                Paragraph(_paragraph_text(r.get("actual_device_label") or ""), styles["BodyText"]),
-                Paragraph(_paragraph_text(r.get("last_seen") or ""), styles["BodyText"]),
-                Paragraph(_paragraph_text(r.get("rssi") if r.get("rssi") is not None else ""), styles["BodyText"]),
-                Paragraph(_paragraph_text(r.get("distance_label") or ""), styles["BodyText"]),
-                Paragraph(_paragraph_text(note), styles["BodyText"]),
+                Paragraph(asset_cell, cell_style),
+                Paragraph(_paragraph_text(_status_label(r["status"])), cell_style),
+                Paragraph(_paragraph_text(r.get("expected_device_label") or ""), cell_style),
+                Paragraph(detected_cell, cell_style),
+                Paragraph("<br/>".join(signal_parts), detail_style),
+                Paragraph(_paragraph_text(note), cell_style),
             ])
             row_backgrounds.append(_status_color(r["status"]))
 
-        table = Table(table_data, colWidths=[100, 165, 80, 100, 100, 105, 40, 58, 135], repeatRows=1)
+        table = Table(
+            table_data,
+            colWidths=[135, 82, 110, 135, 72, 210],
+            repeatRows=1,
+            splitByRow=1,
+            hAlign="LEFT",
+        )
         table_style = [
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]
         for idx, bg in enumerate(row_backgrounds, start=1):
             table_style.append(("BACKGROUND", (0, idx), (-1, idx), bg))
@@ -245,17 +326,34 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
 
 
 def run_customer_audit(customer_id, scheduled_local_dt=None):
-    scheduled, window_start, window_end = _audit_schedule_for_day(scheduled_local_dt)
-    scheduled_for = _fmt_local_dt(scheduled)
-    window_start_label = _fmt_local_dt(window_start)
-    window_end_label = _fmt_local_dt(window_end)
-    start_ts = _unix_from_local_dt(window_start)
-    end_ts = _unix_from_local_dt(window_end)
-    now_label = format_samoa_time(time.time())
-
     conn = get_db()
     try:
         ph = _ph(conn)
+        customer = conn.execute(
+            f"SELECT id, name, COALESCE(audit_time, {ph}) "
+            f"FROM customers WHERE id = {ph} AND active = 1",
+            (f"{AUDIT_HOUR:02d}:{AUDIT_MINUTE:02d}", customer_id),
+        ).fetchone()
+        if not customer:
+            return None
+
+        if scheduled_local_dt is None:
+            scheduled, window_start, window_end = _audit_schedule_for_day(
+                _local_dt_from_unix(),
+                customer[2],
+            )
+        else:
+            scheduled = scheduled_local_dt.replace(second=0, microsecond=0)
+            window_start = scheduled - timedelta(minutes=AUDIT_WINDOW_BEFORE_MIN)
+            window_end = scheduled + timedelta(minutes=AUDIT_WINDOW_AFTER_MIN)
+
+        scheduled_for = _fmt_local_dt(scheduled)
+        window_start_label = _fmt_local_dt(window_start)
+        window_end_label = _fmt_local_dt(window_end)
+        start_ts = _unix_from_local_dt(window_start)
+        end_ts = _unix_from_local_dt(window_end)
+        now_label = format_samoa_time(time.time())
+
         customer = conn.execute(
             f"SELECT id, name FROM customers WHERE id = {ph} AND active = 1",
             (customer_id,),
@@ -408,35 +506,9 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
             f"UPDATE audit_runs SET status={ph}, pdf_path={ph} WHERE id={ph}",
             ("complete", pdf_path, audit_run_id),
         )
-        recipients = [
-            r[0] for r in conn.execute(
-                f"SELECT email FROM app_users WHERE customer_id = {ph} AND active = 1 AND deleted_at IS NULL",
-                (customer_id,),
-            ).fetchall()
-        ]
         conn.commit()
     finally:
         conn.close()
-
-    sent = send_report_email(
-        recipients,
-        f"Daily Equipment Audit - {scheduled_for}",
-        f"Attached is the daily equipment audit for {customer[1]}.\n\n"
-        f"Scan window: {window_start_label} to {window_end_label} Samoa time.\n"
-        f"Assets checked: {len(results)}.",
-        attachment_path=pdf_path,
-    )
-    if sent:
-        conn = get_db()
-        try:
-            ph = _ph(conn)
-            conn.execute(
-                f"UPDATE audit_runs SET emailed_at={ph} WHERE id={ph}",
-                (format_samoa_time(time.time()), audit_run_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
 
     return pdf_path
 
@@ -459,6 +531,34 @@ def run_daily_audits(scheduled_local_dt=None):
     return paths
 
 
+def run_due_customer_audits(now_local=None):
+    """Generate each active customer's audit after its configured scan window."""
+    now_local = now_local or _local_dt_from_unix()
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        rows = conn.execute(
+            f"SELECT id, COALESCE(audit_time, {ph}) FROM customers "
+            f"WHERE active = 1 ORDER BY id",
+            (f"{AUDIT_HOUR:02d}:{AUDIT_MINUTE:02d}",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    generated = []
+    for customer_id, audit_time in rows:
+        scheduled, _window_start, audit_end = _audit_schedule_for_day(now_local, audit_time)
+        if now_local < audit_end:
+            continue
+        try:
+            path = run_customer_audit(customer_id, scheduled_local_dt=scheduled)
+            if path:
+                generated.append(path)
+        except Exception as exc:
+            print(f"[audit] customer {customer_id} failed: {exc}")
+    return generated
+
+
 def _audit_email_recipients(conn, customer_id):
     ph = _ph(conn)
     rows = conn.execute(
@@ -466,6 +566,15 @@ def _audit_email_recipients(conn, customer_id):
         (customer_id,),
     ).fetchall()
     return [str(r[0]).strip() for r in rows if r and r[0] and str(r[0]).strip()]
+
+
+def _audit_whatsapp_recipients(conn, customer_id):
+    ph = _ph(conn)
+    row = conn.execute(
+        f"SELECT whatsapp_recipients FROM customers WHERE id = {ph}",
+        (customer_id,),
+    ).fetchone()
+    return _split_recipients(row[0] if row else "")
 
 
 def _insert_email_log(conn, audit_id, customer_id, recipient, subject, result, attachment_path, send_type, actor_user=None):
@@ -490,6 +599,178 @@ def _insert_email_log(conn, audit_id, customer_id, recipient, subject, result, a
             actor_user.get("email"),
         ),
     )
+
+
+def _insert_webhook_log(conn, audit_id, customer_id, recipients, result, send_type, actor_user=None):
+    ph = _ph(conn)
+    actor_user = actor_user or {}
+    conn.execute(
+        f"INSERT INTO webhook_logs "
+        f"(created_at, audit_run_id, customer_id, webhook_url, recipients, status, http_status, error, send_type, actor_user_id, actor_email) "
+        f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+        (
+            format_samoa_time(time.time()),
+            audit_id,
+            customer_id,
+            result.get("webhook_url") or "",
+            ", ".join(recipients),
+            result.get("status"),
+            result.get("http_status"),
+            result.get("error") or "",
+            send_type,
+            actor_user.get("id"),
+            actor_user.get("email"),
+        ),
+    )
+
+
+def _audit_delivery_data(conn, audit_id):
+    ph = _ph(conn)
+    audit = conn.execute(
+        f"SELECT ar.id, ar.customer_id, c.name, c.slug, ar.scheduled_for, "
+        f"ar.scan_window_start, ar.scan_window_end, ar.pdf_path, ar.status "
+        f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
+        f"WHERE ar.id = {ph}",
+        (audit_id,),
+    ).fetchone()
+    if not audit:
+        return None
+
+    rows = conn.execute(
+        f"SELECT ar.beacon_id, COALESCE(ca.name, cbn.name, ar.beacon_id), ar.status, "
+        f"ca.expected_device_ident, ar.last_seen_device_ident, ar.last_seen_ts, "
+        f"ar.last_distance, ar.last_rssi "
+        f"FROM audit_results ar "
+        f"LEFT JOIN customer_assets ca ON ca.id = ar.asset_id "
+        f"LEFT JOIN customer_beacon_names cbn ON cbn.customer_id = {ph} AND cbn.beacon_id = ar.beacon_id "
+        f"WHERE ar.audit_run_id = {ph} ORDER BY COALESCE(ca.name, cbn.name, ar.beacon_id)",
+        (audit[1], audit_id),
+    ).fetchall()
+    labels = _get_customer_device_labels(conn, audit[1])
+    return audit, rows, labels
+
+
+def _build_whatsapp_payload(conn, audit_id, recipients):
+    delivery_data = _audit_delivery_data(conn, audit_id)
+    if not delivery_data:
+        return None
+    audit, rows, labels = delivery_data
+    audit_id, customer_id, customer_name, customer_slug, scheduled_for, window_start, window_end, _pdf_path, _status = audit
+
+    site_map = {
+        str(device_ident): {
+            "device_ident": str(device_ident),
+            "device_name": label,
+            "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+            "assets": [],
+        }
+        for device_ident, label in labels.items()
+    }
+    summary = {"present": 0, "missing": 0, "equipment_moved": 0, "total": len(rows)}
+    moved_assets = []
+
+    for beacon_id, asset_name, status, expected_ident, actual_ident, last_seen_ts, distance, rssi in rows:
+        status = status or "missing"
+        if status not in summary:
+            status = "missing"
+        summary[status] += 1
+        expected_ident = str(expected_ident) if expected_ident else None
+        actual_ident = str(actual_ident) if actual_ident else None
+        section_ident = expected_ident or actual_ident or "__unassigned__"
+        if section_ident not in site_map:
+            site_map[section_ident] = {
+                "device_ident": None if section_ident == "__unassigned__" else section_ident,
+                "device_name": "Any assigned device" if section_ident == "__unassigned__" else _device_label(section_ident, labels),
+                "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+                "assets": [],
+            }
+
+        asset_payload = {
+            "asset_name": str(asset_name or beacon_id),
+            "beacon_id": str(beacon_id),
+            "status": status,
+            "status_label": _status_label(status),
+            "expected_device_ident": expected_ident,
+            "expected_device_name": _device_label(expected_ident, labels) if expected_ident else "Any assigned device",
+            "detected_device_ident": actual_ident,
+            "detected_device_name": _device_label(actual_ident, labels) if actual_ident else "",
+            "last_seen": _fmt_ts(last_seen_ts),
+            "distance_m": round(float(distance), 2) if distance is not None else None,
+            "rssi": float(rssi) if rssi is not None else None,
+        }
+        site_map[section_ident]["counts"][status] += 1
+        site_map[section_ident]["assets"].append(asset_payload)
+
+        if status == "equipment_moved":
+            moved_assets.append(asset_payload)
+            if actual_ident and actual_ident != section_ident:
+                if actual_ident not in site_map:
+                    site_map[actual_ident] = {
+                        "device_ident": actual_ident,
+                        "device_name": _device_label(actual_ident, labels),
+                        "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+                        "assets": [],
+                    }
+                site_map[actual_ident]["counts"]["equipment_moved"] += 1
+                site_map[actual_ident]["assets"].append({**asset_payload, "detected_here": True})
+
+    devices = sorted(site_map.values(), key=lambda item: item["device_name"].lower())
+    lines = [
+        f"Daily Equipment Audit - {customer_name}",
+        f"Audit time: {scheduled_for} Samoa time",
+        (
+            f"Summary: {summary['present']} in range, "
+            f"{summary['missing']} missing, {summary['equipment_moved']} moved"
+        ),
+        "",
+    ]
+    for device in devices:
+        counts = device["counts"]
+        lines.append(
+            f"{device['device_name']}: {counts['present']} in range, "
+            f"{counts['missing']} missing, {counts['equipment_moved']} moved"
+        )
+        missing_names = [a["asset_name"] for a in device["assets"] if a["status"] == "missing"]
+        if missing_names:
+            lines.append(f"Missing: {', '.join(missing_names)}")
+    if moved_assets:
+        lines.append("")
+        lines.append("Equipment moved:")
+        for asset in moved_assets:
+            lines.append(
+                f"{asset['asset_name']}: {asset['expected_device_name']} -> "
+                f"{asset['detected_device_name'] or 'another site'}"
+            )
+    lines.extend(["", "Please check the audit report sent by email for full details."])
+
+    return {
+        "event": "daily_equipment_audit",
+        "version": 1,
+        "customer": {
+            "id": customer_id,
+            "name": customer_name,
+            "slug": customer_slug,
+        },
+        "audit": {
+            "id": audit_id,
+            "scheduled_for": scheduled_for,
+            "scan_window_start": window_start,
+            "scan_window_end": window_end,
+            "timezone": "Pacific/Apia",
+        },
+        "whatsapp": {
+            "recipients": recipients,
+            "template_name": "daily_equipment_audit",
+            "language": "en",
+        },
+        "summary": summary,
+        "devices": devices,
+        "moved_assets": moved_assets,
+        "message": {
+            "title": f"Daily Equipment Audit - {customer_name}",
+            "body": "\n".join(lines),
+        },
+    }
 
 
 def send_audit_report_email(audit_id, actor_user=None, send_type="manual"):
@@ -571,31 +852,127 @@ def send_audit_report_email(audit_id, actor_user=None, send_type="manual"):
     return sent_count
 
 
-def send_pending_audit_report_emails(scheduled_local_dt=None):
-    """Email completed audit PDFs for the audit day that have not been sent yet."""
-    scheduled, _window_start, _window_end = _audit_schedule_for_day(scheduled_local_dt)
-    scheduled_for = _fmt_local_dt(scheduled)
+def send_audit_whatsapp(audit_id, actor_user=None, send_type="manual"):
+    conn = get_db()
+    try:
+        ph = _ph(conn)
+        row = conn.execute(
+            f"SELECT customer_id, status FROM audit_runs WHERE id = {ph}",
+            (audit_id,),
+        ).fetchone()
+        if not row:
+            return False
+        customer_id, audit_status = row
+        recipients = _audit_whatsapp_recipients(conn, customer_id)
+        if audit_status != "complete":
+            result = {
+                "status": "skipped",
+                "http_status": None,
+                "error": "Audit report is not complete",
+                "webhook_url": "",
+            }
+            payload = None
+        elif not recipients:
+            result = {
+                "status": "skipped",
+                "http_status": None,
+                "error": "No WhatsApp recipients configured for this customer",
+                "webhook_url": "",
+            }
+            payload = None
+        else:
+            payload = _build_whatsapp_payload(conn, audit_id, recipients)
+            result = None
+    finally:
+        conn.close()
+
+    if result is None:
+        result = send_whatsapp_audit_webhook(payload)
 
     conn = get_db()
     try:
         ph = _ph(conn)
+        _insert_webhook_log(
+            conn,
+            audit_id,
+            customer_id,
+            recipients,
+            result,
+            send_type,
+            actor_user=actor_user,
+        )
+        now_label = format_samoa_time(time.time())
+        conn.execute(
+            f"UPDATE audit_runs SET whatsapp_last_attempt_at = {ph} WHERE id = {ph}",
+            (now_label, audit_id),
+        )
+        if result.get("status") == "sent":
+            conn.execute(
+                f"UPDATE audit_runs SET whatsapp_sent_at = {ph} WHERE id = {ph}",
+                (now_label, audit_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return result.get("status") == "sent"
+
+
+def send_due_customer_deliveries(now_local=None):
+    """Send email and WhatsApp once each customer's configured delivery time is due."""
+    now_local = now_local or _local_dt_from_unix()
+    conn = get_db()
+    try:
+        ph = _ph(conn)
         rows = conn.execute(
-            f"SELECT ar.id FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
-            f"WHERE c.active = 1 AND ar.scheduled_for = {ph} AND ar.status = {ph} "
-            f"AND ar.pdf_path IS NOT NULL AND (ar.emailed_at IS NULL OR ar.emailed_at = '') "
-            f"ORDER BY c.name",
-            (scheduled_for, "complete"),
+            f"SELECT ar.id, ar.scheduled_for, ar.emailed_at, ar.whatsapp_sent_at, "
+            f"ar.whatsapp_last_attempt_at, COALESCE(c.delivery_time, {ph}), "
+            f"COALESCE(c.audit_time, {ph}) "
+            f"FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
+            f"WHERE c.active = 1 AND ar.status = {ph} AND ar.pdf_path IS NOT NULL "
+            f"ORDER BY ar.id DESC LIMIT 500",
+            (
+                f"{AUDIT_EMAIL_HOUR:02d}:{AUDIT_EMAIL_MINUTE:02d}",
+                f"{AUDIT_HOUR:02d}:{AUDIT_MINUTE:02d}",
+                "complete",
+            ),
         ).fetchall()
     finally:
         conn.close()
 
-    sent_count = 0
-    for row in rows:
-        sent_count += send_audit_report_email(row[0], send_type="scheduled")
+    email_count = 0
+    whatsapp_count = 0
+    for (
+        audit_id,
+        scheduled_for,
+        emailed_at,
+        whatsapp_sent_at,
+        whatsapp_last_attempt_at,
+        delivery_time,
+        audit_time,
+    ) in rows:
+        try:
+            scheduled = datetime.strptime(str(scheduled_for), "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            continue
+        configured_hour, configured_minute = _parse_clock(audit_time, AUDIT_HOUR, AUDIT_MINUTE)
+        if (scheduled.hour, scheduled.minute) != (configured_hour, configured_minute):
+            continue
+        if scheduled < now_local - timedelta(days=2):
+            continue
+        due_at = _delivery_time_for_audit(scheduled, delivery_time)
+        if now_local < due_at:
+            continue
+        if not emailed_at:
+            email_count += send_audit_report_email(audit_id, send_type="scheduled")
+        if not whatsapp_sent_at and not whatsapp_last_attempt_at:
+            whatsapp_count += int(send_audit_whatsapp(audit_id, send_type="scheduled"))
 
-    if rows:
-        print(f"[audit-email] sent {sent_count} recipient emails across {len(rows)} audit reports for {scheduled_for}")
-    return sent_count
+    return {"email_recipients_sent": email_count, "whatsapp_webhooks_sent": whatsapp_count}
+
+
+def send_pending_audit_report_emails(scheduled_local_dt=None):
+    """Backward-compatible wrapper for the per-customer delivery scheduler."""
+    return send_due_customer_deliveries(scheduled_local_dt or _local_dt_from_unix())["email_recipients_sent"]
 
 
 def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance=None, rssi=None):
@@ -631,17 +1008,11 @@ def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance
 
 
 def _audit_loop():
-    last_run_key = None
     while True:
         try:
             now_local = _local_dt_from_unix()
-            scheduled, _start, audit_end = _audit_schedule_for_day(now_local)
-            run_key = scheduled.strftime("%Y-%m-%d")
-            # Run just after the scan window closes so the 6 PM audit can include
-            # packets that arrive shortly after the scheduled audit time.
-            if now_local >= audit_end and run_key != last_run_key:
-                run_daily_audits(scheduled_local_dt=scheduled)
-                last_run_key = run_key
+            run_due_customer_audits(now_local)
+            send_due_customer_deliveries(now_local)
             time.sleep(30)
         except Exception as e:
             print(f"[audit] loop error: {e}")

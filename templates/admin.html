@@ -86,7 +86,7 @@
     }
 
     label { display: block; margin-top: 9px; font-size: 0.8rem; color: #cbd5e1; }
-    input, select {
+    input, select, textarea {
       width: 100%;
       margin-top: 4px;
       padding: 8px;
@@ -96,6 +96,7 @@
       color: var(--text);
       min-height: 36px;
     }
+    textarea { resize: vertical; min-height: 68px; }
     input::placeholder { color: #8b93a3; }
 
     button, .button-link {
@@ -329,6 +330,12 @@
           <input name="name" required />
           <label>Slug</label>
           <input name="slug" placeholder="optional" />
+          <label>Daily audit time (Samoa)</label>
+          <input name="audit_time" type="time" value="18:00" required />
+          <label>Email and WhatsApp delivery time (Samoa)</label>
+          <input name="delivery_time" type="time" value="18:30" required />
+          <label>WhatsApp recipients</label>
+          <textarea name="whatsapp_recipients" placeholder="+685..., +61..."></textarea>
           <button type="submit">Create customer</button>
           <button type="button" class="secondary-btn" data-modal-open="customers-modal">View all</button>
         </form>
@@ -460,6 +467,16 @@
         <div class="summary-row"><span>Manual resend</span><strong>Enabled</strong></div>
         <button type="button" class="secondary-btn" data-modal-open="email-logs-modal">View delivery logs</button>
       </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>WhatsApp Delivery</h2>
+          <span class="metric">{{ webhook_logs|length }} recent</span>
+        </div>
+        <div class="summary-row"><span>n8n webhook delivery</span><strong>Enabled when configured</strong></div>
+        <div class="summary-row"><span>Newest attempt</span><strong>{% if webhook_logs %}{{ webhook_logs[0][0] }}{% else %}None yet{% endif %}</strong></div>
+        <button type="button" class="secondary-btn" data-modal-open="webhook-logs-modal">View webhook logs</button>
+      </section>
     </div>
   </main>
 
@@ -468,12 +485,15 @@
       <div class="modal-header"><div><div class="modal-title" id="customers-title">Customers</div><div class="muted">{{ customers|length }} total customers</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Created</th><th class="actions-cell">Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Slug</th><th>Audit</th><th>Delivery</th><th>WhatsApp</th><th>Status</th><th>Created</th><th class="actions-cell">Actions</th></tr></thead>
           <tbody>
             {% for c in customers %}
             <tr>
               <td><strong>{{ c[1] }}</strong></td>
               <td>{{ c[2] }}</td>
+              <td>{{ c[5] }} Samoa</td>
+              <td>{{ c[6] }} Samoa</td>
+              <td>{{ c[7] or "Not configured" }}</td>
               <td>{{ "Active" if c[3] else "Suspended" }}</td>
               <td>{{ c[4] }}</td>
               <td>
@@ -486,6 +506,9 @@
                     <form class="edit-form" method="post" action="{{ url_for('admin.update_customer', customer_id=c[0]) }}">
                       <label>Name<input name="name" value="{{ c[1] }}" required /></label>
                       <label>Slug<input name="slug" value="{{ c[2] }}" /></label>
+                      <label>Audit time<input name="audit_time" type="time" value="{{ c[5] }}" required /></label>
+                      <label>Delivery time<input name="delivery_time" type="time" value="{{ c[6] }}" required /></label>
+                      <label>WhatsApp recipients<textarea name="whatsapp_recipients" placeholder="+685..., +61...">{{ c[7] or "" }}</textarea></label>
                       <div class="edit-form-actions"><button type="submit">Save changes</button></div>
                     </form>
                   </details>
@@ -669,7 +692,7 @@
       <div class="modal-header"><div><div class="modal-title" id="audits-title">Daily Audits</div><div class="muted">{{ audits|length }} recent audit runs</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Customer</th><th>Scheduled</th><th>Scan Window</th><th>Status</th><th>Email</th><th>Report</th><th class="actions-cell">Actions</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Scheduled</th><th>Scan Window</th><th>Status</th><th>Email</th><th>WhatsApp</th><th>Report</th><th class="actions-cell">Actions</th></tr></thead>
           <tbody>
             {% for a in audits %}
             <tr>
@@ -678,12 +701,18 @@
               <td>{{ a[3] }} to {{ a[4] }}</td>
               <td>{{ a[5] }}</td>
               <td>{{ a[7] or "not sent" }}</td>
+              <td>{{ a[8] or "not sent" }}</td>
               <td>{% if a[6] %}<a class="button-link" href="{{ url_for('download_audit_report', audit_id=a[0]) }}">Download</a>{% else %}<span class="muted">No report</span>{% endif %}</td>
               <td>
                 {% if a[6] and a[5] == "complete" %}
-                <form class="inline-form" method="post" action="{{ url_for('admin.send_audit_email', audit_id=a[0]) }}">
-                  <button type="submit">{{ "Resend email" if a[7] else "Send email" }}</button>
-                </form>
+                <div class="action-stack">
+                  <form class="inline-form" method="post" action="{{ url_for('admin.send_audit_email', audit_id=a[0]) }}">
+                    <button type="submit">{{ "Resend email" if a[7] else "Send email" }}</button>
+                  </form>
+                  <form class="inline-form" method="post" action="{{ url_for('admin.send_audit_whatsapp_message', audit_id=a[0]) }}">
+                    <button type="submit">{{ "Resend WhatsApp" if a[8] else "Send WhatsApp" }}</button>
+                  </form>
+                </div>
                 {% else %}<span class="muted">Report not ready</span>{% endif %}
               </td>
             </tr>
@@ -736,6 +765,32 @@
               <td>{{ e[9] }}</td>
               <td>{{ e[6] or "" }}</td>
               <td>{{ e[8] or "system" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="webhook-logs-modal" aria-hidden="true">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="webhook-logs-title">
+      <div class="modal-header"><div><div class="modal-title" id="webhook-logs-title">WhatsApp Webhook Logs</div><div class="muted">{{ webhook_logs|length }} recent n8n delivery attempts</div></div><button type="button" class="modal-close" data-modal-close>&times;</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Customer</th><th>Recipients</th><th>Status</th><th>HTTP</th><th>Type</th><th>Audit</th><th>Error</th><th>Actor</th></tr></thead>
+          <tbody>
+            {% for w in webhook_logs %}
+            <tr>
+              <td>{{ w[0] }}</td>
+              <td>{{ w[1] or "Unknown" }}</td>
+              <td><strong>{{ w[2] or "No recipients" }}</strong></td>
+              <td><span class="status-pill status-{{ w[3] or 'skipped' }}">{{ w[3] or "skipped" }}</span></td>
+              <td>{{ w[4] or "" }}</td>
+              <td>{{ w[6] or "scheduled" }}</td>
+              <td>{{ w[8] }}</td>
+              <td>{{ w[5] or "" }}</td>
+              <td>{{ w[7] or "system" }}</td>
             </tr>
             {% endfor %}
           </tbody>

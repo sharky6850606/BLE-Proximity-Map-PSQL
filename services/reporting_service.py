@@ -305,36 +305,14 @@ def _daily_loop():
     while True:
         try:
             from services.audit_service import (
-                run_daily_audits,
-                send_pending_audit_report_emails,
-                _audit_email_time_for_day,
-                _audit_schedule_for_day,
                 _local_dt_from_unix,
+                run_due_customer_audits,
+                send_due_customer_deliveries,
             )
 
             now_local = _local_dt_from_unix()
-            scheduled, _start, audit_end = _audit_schedule_for_day(now_local)
-            email_at = _audit_email_time_for_day(now_local)
-            run_key = scheduled.strftime("%Y-%m-%d")
-            if not hasattr(_daily_loop, "last_run_key"):
-                _daily_loop.last_run_key = None
-            if not hasattr(_daily_loop, "last_email_key"):
-                _daily_loop.last_email_key = None
-
-            if now_local >= audit_end and _daily_loop.last_run_key != run_key:
-                run_daily_audits(scheduled_local_dt=scheduled)
-                _daily_loop.last_run_key = run_key
-                time.sleep(60)
-
-            if (
-                now_local >= email_at
-                and _daily_loop.last_run_key == run_key
-                and _daily_loop.last_email_key != run_key
-            ):
-                send_pending_audit_report_emails(scheduled_local_dt=scheduled)
-                _daily_loop.last_email_key = run_key
-                time.sleep(60)
-
+            run_due_customer_audits(now_local)
+            send_due_customer_deliveries(now_local)
             time.sleep(30)
         except Exception as e:
             print(f"[daily-loop] error: {e}")

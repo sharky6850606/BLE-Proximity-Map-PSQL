@@ -7,8 +7,19 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from database import get_db
 from services.auth_service import admin_required, current_user, hash_password, normalize_email
 from services.audit_log_service import log_event
-from config import AUDIT_WINDOW_AFTER_MIN
-from services.audit_service import run_customer_audit, send_audit_report_email, _local_dt_from_unix
+from config import (
+    AUDIT_EMAIL_HOUR,
+    AUDIT_EMAIL_MINUTE,
+    AUDIT_HOUR,
+    AUDIT_MINUTE,
+    AUDIT_WINDOW_AFTER_MIN,
+)
+from services.audit_service import (
+    _local_dt_from_unix,
+    run_customer_audit,
+    send_audit_report_email,
+    send_audit_whatsapp,
+)
 from services.beacon_logic import format_samoa_time
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -27,6 +38,23 @@ def _slugify(value):
     return slug or "customer"
 
 
+def _normalize_clock(value, default_hour, default_minute):
+    try:
+        hour_text, minute_text = str(value or "").strip().split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+    except (TypeError, ValueError):
+        pass
+    return f"{default_hour:02d}:{default_minute:02d}"
+
+
+def _normalize_whatsapp_recipients(value):
+    normalized = str(value or "").replace(";", ",").replace("\n", ",")
+    return ", ".join(item.strip() for item in normalized.split(",") if item.strip())
+
+
 def _ensure_email_logs_table(conn):
     """Keep the admin console usable if a deployment missed this migration."""
     if getattr(conn, "backend", "postgres") == "postgres":
@@ -42,6 +70,22 @@ def _ensure_email_logs_table(conn):
                 status TEXT,
                 error TEXT,
                 attachment_path TEXT,
+                send_type TEXT,
+                actor_user_id BIGINT,
+                actor_email TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TEXT,
+                audit_run_id BIGINT REFERENCES audit_runs(id),
+                customer_id BIGINT REFERENCES customers(id),
+                webhook_url TEXT,
+                recipients TEXT,
+                status TEXT,
+                http_status INTEGER,
+                error TEXT,
                 send_type TEXT,
                 actor_user_id BIGINT,
                 actor_email TEXT
@@ -65,8 +109,26 @@ def _ensure_email_logs_table(conn):
                 actor_email TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                audit_run_id INTEGER REFERENCES audit_runs(id),
+                customer_id INTEGER REFERENCES customers(id),
+                webhook_url TEXT,
+                recipients TEXT,
+                status TEXT,
+                http_status INTEGER,
+                error TEXT,
+                send_type TEXT,
+                actor_user_id INTEGER,
+                actor_email TEXT
+            )
+        """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_audit ON webhook_logs(audit_run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at)")
 
 
 def _unique_customer_slug(conn, requested_slug, exclude_customer_id=None):
@@ -103,7 +165,10 @@ def dashboard():
         _ensure_email_logs_table(conn)
         conn.commit()
         customers = conn.execute(
-            "SELECT id, name, slug, active, created_at FROM customers ORDER BY name"
+            f"SELECT id, name, slug, active, created_at, "
+            f"COALESCE(audit_time, '{AUDIT_HOUR:02d}:{AUDIT_MINUTE:02d}'), "
+            f"COALESCE(delivery_time, '{AUDIT_EMAIL_HOUR:02d}:{AUDIT_EMAIL_MINUTE:02d}'), "
+            "whatsapp_recipients FROM customers ORDER BY name"
         ).fetchall()
         users = conn.execute(
             "SELECT u.id, u.email, u.role, u.active, c.name, u.last_login_at, u.customer_id "
@@ -132,7 +197,8 @@ def dashboard():
             "ORDER BY c.name, COALESCE(ca.name, ca.beacon_id)"
         ).fetchall()
         audits = conn.execute(
-            "SELECT ar.id, c.name, ar.scheduled_for, ar.scan_window_start, ar.scan_window_end, ar.status, ar.pdf_path, ar.emailed_at "
+            "SELECT ar.id, c.name, ar.scheduled_for, ar.scan_window_start, ar.scan_window_end, ar.status, "
+            "ar.pdf_path, ar.emailed_at, ar.whatsapp_sent_at "
             "FROM audit_runs ar JOIN customers c ON c.id = ar.customer_id "
             "ORDER BY ar.id DESC LIMIT 100"
         ).fetchall()
@@ -145,6 +211,12 @@ def dashboard():
             "SELECT el.created_at, c.name, el.recipient, el.subject, el.status, el.provider, el.error, el.send_type, el.actor_email, el.audit_run_id "
             "FROM email_logs el LEFT JOIN customers c ON c.id = el.customer_id "
             "ORDER BY el.id DESC LIMIT 200"
+        ).fetchall()
+        webhook_logs = conn.execute(
+            "SELECT wl.created_at, c.name, wl.recipients, wl.status, wl.http_status, wl.error, "
+            "wl.send_type, wl.actor_email, wl.audit_run_id "
+            "FROM webhook_logs wl LEFT JOIN customers c ON c.id = wl.customer_id "
+            "ORDER BY wl.id DESC LIMIT 200"
         ).fetchall()
     finally:
         conn.close()
@@ -159,6 +231,7 @@ def dashboard():
         audits=audits,
         audit_logs=audit_logs,
         email_logs=email_logs,
+        webhook_logs=webhook_logs,
     )
 
 
@@ -169,13 +242,22 @@ def create_customer():
     if not name:
         return redirect(url_for("admin.dashboard"))
     requested_slug = request.form.get("slug") or name
+    audit_time = _normalize_clock(request.form.get("audit_time"), AUDIT_HOUR, AUDIT_MINUTE)
+    delivery_time = _normalize_clock(
+        request.form.get("delivery_time"),
+        AUDIT_EMAIL_HOUR,
+        AUDIT_EMAIL_MINUTE,
+    )
+    whatsapp_recipients = _normalize_whatsapp_recipients(request.form.get("whatsapp_recipients"))
     conn = get_db()
     try:
         ph = _ph(conn)
         slug = _unique_customer_slug(conn, requested_slug)
         conn.execute(
-            f"INSERT INTO customers (name, slug, active, created_at) VALUES ({ph},{ph},{ph},{ph})",
-            (name, slug, 1, _now_label()),
+            f"INSERT INTO customers "
+            f"(name, slug, active, audit_time, delivery_time, whatsapp_recipients, created_at) "
+            f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+            (name, slug, 1, audit_time, delivery_time, whatsapp_recipients, _now_label()),
         )
         conn.commit()
     except Exception:
@@ -187,7 +269,7 @@ def create_customer():
         "admin.create_customer",
         target_type="customer",
         target_id=slug,
-        details=f"Created customer {name}",
+        details=f"Created customer {name}; audit {audit_time}, delivery {delivery_time}",
         actor_user=current_user(),
     )
     return redirect(url_for("admin.dashboard"))
@@ -200,13 +282,21 @@ def update_customer(customer_id):
     requested_slug = request.form.get("slug") or name
     if not name:
         return redirect(url_for("admin.dashboard"))
+    audit_time = _normalize_clock(request.form.get("audit_time"), AUDIT_HOUR, AUDIT_MINUTE)
+    delivery_time = _normalize_clock(
+        request.form.get("delivery_time"),
+        AUDIT_EMAIL_HOUR,
+        AUDIT_EMAIL_MINUTE,
+    )
+    whatsapp_recipients = _normalize_whatsapp_recipients(request.form.get("whatsapp_recipients"))
     conn = get_db()
     try:
         ph = _ph(conn)
         slug = _unique_customer_slug(conn, requested_slug, exclude_customer_id=customer_id)
         conn.execute(
-            f"UPDATE customers SET name = {ph}, slug = {ph} WHERE id = {ph}",
-            (name, slug, customer_id),
+            f"UPDATE customers SET name = {ph}, slug = {ph}, audit_time = {ph}, "
+            f"delivery_time = {ph}, whatsapp_recipients = {ph} WHERE id = {ph}",
+            (name, slug, audit_time, delivery_time, whatsapp_recipients, customer_id),
         )
         conn.commit()
     except Exception:
@@ -218,7 +308,7 @@ def update_customer(customer_id):
         "admin.update_customer",
         target_type="customer",
         target_id=customer_id,
-        details=f"Updated customer {name}",
+        details=f"Updated customer {name}; audit {audit_time}, delivery {delivery_time}",
         actor_user=current_user(),
         customer_id=customer_id,
     )
@@ -663,6 +753,20 @@ def send_audit_email(audit_id):
         target_type="audit_run",
         target_id=audit_id,
         details=f"Manual audit email send attempted; {sent_count} recipient(s) sent",
+        actor_user=current_user(),
+    )
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.route("/audits/<int:audit_id>/whatsapp", methods=["POST"])
+@admin_required
+def send_audit_whatsapp_message(audit_id):
+    sent = send_audit_whatsapp(audit_id, actor_user=current_user(), send_type="manual")
+    _safe_log_event(
+        "admin.send_audit_whatsapp",
+        target_type="audit_run",
+        target_id=audit_id,
+        details=f"Manual WhatsApp audit send attempted; status {'sent' if sent else 'not sent'}",
         actor_user=current_user(),
     )
     return redirect(url_for("admin.dashboard"))

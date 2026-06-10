@@ -27,8 +27,15 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT",
     "ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS customer_id BIGINT",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS audit_time TEXT DEFAULT '18:00'",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS delivery_time TEXT DEFAULT '18:30'",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp_recipients TEXT",
+    "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_sent_at TEXT",
+    "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_last_attempt_at TEXT",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_logs_audit ON webhook_logs(audit_run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at)",
 ]
 
 
@@ -196,6 +203,9 @@ def init_db():
                     name TEXT NOT NULL,
                     slug TEXT UNIQUE,
                     active INTEGER DEFAULT 1,
+                    audit_time TEXT DEFAULT '18:00',
+                    delivery_time TEXT DEFAULT '18:30',
+                    whatsapp_recipients TEXT,
                     created_at TEXT
                 )
             """)
@@ -286,6 +296,8 @@ def init_db():
                     status TEXT,
                     pdf_path TEXT,
                     emailed_at TEXT,
+                    whatsapp_sent_at TEXT,
+                    whatsapp_last_attempt_at TEXT,
                     created_at TEXT,
                     UNIQUE(customer_id, scheduled_for)
                 )
@@ -335,6 +347,22 @@ def init_db():
                     actor_email TEXT
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_logs (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TEXT,
+                    audit_run_id BIGINT REFERENCES audit_runs(id),
+                    customer_id BIGINT REFERENCES customers(id),
+                    webhook_url TEXT,
+                    recipients TEXT,
+                    status TEXT,
+                    http_status INTEGER,
+                    error TEXT,
+                    send_type TEXT,
+                    actor_user_id BIGINT,
+                    actor_email TEXT
+                )
+            """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
@@ -343,6 +371,8 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_audit ON webhook_logs(audit_run_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at)")
 
             # Postgres-specific migrations for existing DBs (ignore errors if columns already exist)
             for stmt in POSTGRES_MIGRATIONS:
@@ -444,6 +474,9 @@ def init_db():
                 name TEXT NOT NULL,
                 slug TEXT UNIQUE,
                 active INTEGER DEFAULT 1,
+                audit_time TEXT DEFAULT '18:00',
+                delivery_time TEXT DEFAULT '18:30',
+                whatsapp_recipients TEXT,
                 created_at TEXT
             )
         """)
@@ -533,6 +566,8 @@ def init_db():
                 status TEXT,
                 pdf_path TEXT,
                 emailed_at TEXT,
+                whatsapp_sent_at TEXT,
+                whatsapp_last_attempt_at TEXT,
                 created_at TEXT,
                 UNIQUE(customer_id, scheduled_for)
             )
@@ -582,6 +617,22 @@ def init_db():
                 actor_email TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                audit_run_id INTEGER REFERENCES audit_runs(id),
+                customer_id INTEGER REFERENCES customers(id),
+                webhook_url TEXT,
+                recipients TEXT,
+                status TEXT,
+                http_status INTEGER,
+                error TEXT,
+                send_type TEXT,
+                actor_user_id INTEGER,
+                actor_email TEXT
+            )
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_customer ON customer_assets(customer_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_assets_beacon ON customer_assets(beacon_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_beacon_observations_lookup ON beacon_observations(beacon_id, device_ident, observed_ts)")
@@ -590,6 +641,8 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_customer ON audit_logs(customer_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_audit ON webhook_logs(audit_run_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_created ON webhook_logs(created_at)")
 
         # SQLite migrations for existing DBs
         cur.execute("PRAGMA table_info(device_states)")
@@ -612,6 +665,20 @@ def init_db():
             cur.execute("ALTER TABLE beacon_observations ADD COLUMN battery_voltage REAL")
         if "battery_percent" not in existing_cols:
             cur.execute("ALTER TABLE beacon_observations ADD COLUMN battery_percent INTEGER")
+        cur.execute("PRAGMA table_info(customers)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "audit_time" not in existing_cols:
+            cur.execute("ALTER TABLE customers ADD COLUMN audit_time TEXT DEFAULT '18:00'")
+        if "delivery_time" not in existing_cols:
+            cur.execute("ALTER TABLE customers ADD COLUMN delivery_time TEXT DEFAULT '18:30'")
+        if "whatsapp_recipients" not in existing_cols:
+            cur.execute("ALTER TABLE customers ADD COLUMN whatsapp_recipients TEXT")
+        cur.execute("PRAGMA table_info(audit_runs)")
+        existing_cols = {r[1] for r in cur.fetchall()}
+        if "whatsapp_sent_at" not in existing_cols:
+            cur.execute("ALTER TABLE audit_runs ADD COLUMN whatsapp_sent_at TEXT")
+        if "whatsapp_last_attempt_at" not in existing_cols:
+            cur.execute("ALTER TABLE audit_runs ADD COLUMN whatsapp_last_attempt_at TEXT")
 
         cur.execute("PRAGMA table_info(activity_reports)")
         existing_cols = {r[1] for r in cur.fetchall()}
