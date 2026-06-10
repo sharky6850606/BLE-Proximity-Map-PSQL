@@ -63,6 +63,15 @@ def data():
                 devices_meta[str(did)] = {"name": nm or "", "color": col or ""}
         if not is_admin(user) and user.get("customer_id"):
             rows = conn.execute(
+                f"SELECT device_ident, label FROM customer_devices WHERE customer_id = {ph}",
+                (user.get("customer_id"),),
+            ).fetchall()
+            for did, label in rows:
+                if did and label:
+                    devices_meta.setdefault(str(did), {})
+                    devices_meta[str(did)]["name"] = label
+
+            rows = conn.execute(
                 f"SELECT device_ident, name, color FROM customer_device_settings WHERE customer_id = {ph}",
                 (user.get("customer_id"),),
             ).fetchall()
@@ -74,14 +83,22 @@ def data():
                     if col:
                         devices_meta[str(did)]["color"] = col
 
-        # Pull device rows from persisted state (single source of truth)
-        scope_sql, scope_params = device_scope_clause(conn, "device_ident", user=user)
-        drows = conn.execute(
-            "SELECT device_ident, last_seen_ts, last_lat, last_lon "
-            "FROM device_states "
-            f"WHERE device_ident IS NOT NULL AND {scope_sql}",
-            scope_params,
-        ).fetchall()
+        # Customer maps start from assignments so offline or not-yet-seen devices
+        # remain visible. Live state is optional and joined when available.
+        if not is_admin(user) and user.get("customer_id"):
+            drows = conn.execute(
+                "SELECT cd.device_ident, ds.last_seen_ts, ds.last_lat, ds.last_lon "
+                "FROM customer_devices cd "
+                "LEFT JOIN device_states ds ON ds.device_ident = cd.device_ident "
+                f"WHERE cd.customer_id = {ph} "
+                "ORDER BY cd.created_at, cd.device_ident",
+                (user.get("customer_id"),),
+            ).fetchall()
+        else:
+            drows = conn.execute(
+                "SELECT device_ident, last_seen_ts, last_lat, last_lon "
+                "FROM device_states WHERE device_ident IS NOT NULL",
+            ).fetchall()
 
         # Pull fresh beacon rows and group by device
         bscope_sql, bscope_params = device_scope_clause(conn, "device_ident", user=user)
@@ -110,27 +127,29 @@ def data():
 
         for device_ident, last_seen_ts, last_lat, last_lon in drows:
             did = str(device_ident or "").strip()
-            if not did or last_seen_ts is None:
-                continue
-
-            # Keep device visible slightly longer than beacon TTL to survive staggered payloads.
-            if (now_ts - int(last_seen_ts)) > (max_age * 2):
+            if not did:
                 continue
 
             meta = devices_meta.get(did, {})
             device_beacons = beacons_by_device.get(did, [])
             device_beacons.sort(key=lambda x: (x.get("distance") is None, x.get("distance") or 9999))
+            timestamp_raw = int(last_seen_ts) if last_seen_ts is not None else None
+            online = bool(
+                timestamp_raw is not None
+                and (now_ts - timestamp_raw) <= (max_age * 2)
+            )
 
             out.append({
                 "id": did,
                 "ident": did,
-                "timestamp_raw": int(last_seen_ts),
-                "timestamp": format_samoa_time(int(last_seen_ts)),
+                "timestamp_raw": timestamp_raw,
+                "timestamp": format_samoa_time(timestamp_raw) if timestamp_raw is not None else None,
                 "lat": float(last_lat) if last_lat is not None else None,
                 "lon": float(last_lon) if last_lon is not None else None,
                 "beacons": device_beacons,
                 "name": meta.get("name") or None,
                 "color": meta.get("color") or None,
+                "online": online,
             })
 
     except Exception as e:
