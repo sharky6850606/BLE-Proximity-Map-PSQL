@@ -76,6 +76,11 @@ def flespi_receiver():
             lat = snap.get("lat")
             lon = snap.get("lon")
             conn.execute(
+                f"INSERT INTO device_observations (observed_ts, device_ident, lat, lon, created_at) "
+                f"VALUES ({ph},{ph},{ph},{ph},{ph})",
+                (payload_ts, ident, lat, lon, int(time.time())),
+            )
+            conn.execute(
                 f"INSERT INTO device_states (device_key, state, last_change_ts, device_ident, online, last_seen_ts, last_online_ts, last_lat, last_lon, last_payload_ts) "
                 f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph}) "
                 "ON CONFLICT(device_key) DO UPDATE SET "

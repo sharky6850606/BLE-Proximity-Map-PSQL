@@ -161,6 +161,63 @@ def _latest_observation_on_device_before(conn, beacon_id, device_ident, end_ts):
     ).fetchone()
 
 
+def _device_reported_in_window(conn, device_ident, start_ts, end_ts):
+    if not device_ident:
+        return False
+    ph = _ph(conn)
+    row = conn.execute(
+        f"SELECT 1 FROM device_observations "
+        f"WHERE device_ident = {ph} AND observed_ts >= {ph} AND observed_ts <= {ph} "
+        "LIMIT 1",
+        (str(device_ident), start_ts, end_ts),
+    ).fetchone()
+    if row:
+        return True
+
+    # Fallback for data that existed before device_observations was added.
+    row = conn.execute(
+        f"SELECT last_payload_ts, last_seen_ts FROM device_states WHERE device_ident = {ph}",
+        (str(device_ident),),
+    ).fetchone()
+    if not row:
+        return False
+    for ts in row:
+        if ts is not None and start_ts <= int(ts) <= end_ts:
+            return True
+    return False
+
+
+def _latest_device_seen_before(conn, device_ident, end_ts):
+    if not device_ident:
+        return None
+    ph = _ph(conn)
+    row = conn.execute(
+        f"SELECT observed_ts FROM device_observations "
+        f"WHERE device_ident = {ph} AND observed_ts <= {ph} "
+        "ORDER BY observed_ts DESC LIMIT 1",
+        (str(device_ident), end_ts),
+    ).fetchone()
+    if row and row[0] is not None:
+        return int(row[0])
+
+    row = conn.execute(
+        f"SELECT last_payload_ts, last_seen_ts FROM device_states WHERE device_ident = {ph}",
+        (str(device_ident),),
+    ).fetchone()
+    if not row:
+        return None
+    candidates = [int(ts) for ts in row if ts is not None and int(ts) <= end_ts]
+    return max(candidates) if candidates else None
+
+
+def _devices_reported_map(conn, device_idents, start_ts, end_ts):
+    return {
+        str(device_ident): _device_reported_in_window(conn, str(device_ident), start_ts, end_ts)
+        for device_ident in device_idents
+        if device_ident
+    }
+
+
 def _insert_audit_run(conn, customer_id, scheduled_for, window_start, window_end):
     ph = _ph(conn)
     existing = conn.execute(
@@ -187,6 +244,8 @@ def _status_label(status):
         return "In range"
     if status == "equipment_moved":
         return "Equipment moved"
+    if status == "device_offline":
+        return "Site offline"
     return "Missing"
 
 
@@ -195,6 +254,8 @@ def _status_color(status):
         return colors.HexColor("#dcfce7")
     if status == "equipment_moved":
         return colors.HexColor("#fef3c7")
+    if status == "device_offline":
+        return colors.HexColor("#dbeafe")
     return colors.HexColor("#fee2e2")
 
 
@@ -243,6 +304,7 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
     present_count = sum(1 for status in summary_statuses.values() if status == "present")
     missing_count = sum(1 for status in summary_statuses.values() if status == "missing")
     moved_count = sum(1 for status in summary_statuses.values() if status == "equipment_moved")
+    offline_count = sum(1 for status in summary_statuses.values() if status == "device_offline")
 
     story = [
         Paragraph("Daily Equipment Audit", styles["Title"]),
@@ -251,7 +313,7 @@ def _write_audit_pdf(pdf_path, customer_name, scheduled_for, window_start, windo
         Paragraph(f"Scan window: {_paragraph_text(window_start)} to {_paragraph_text(window_end)}", styles["Normal"]),
         Paragraph(
             f"Summary: {present_count} present, {moved_count} equipment moved, "
-            f"{missing_count} missing, {len(summary_statuses)} total assets",
+            f"{missing_count} missing, {offline_count} site offline, {len(summary_statuses)} total assets",
             styles["Normal"],
         ),
         Spacer(1, 12),
@@ -368,6 +430,7 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
 
         customer_devices = _get_customer_devices(conn, customer_id)
         device_labels = _get_customer_device_labels(conn, customer_id)
+        device_reported = _devices_reported_map(conn, customer_devices, start_ts, end_ts)
         assets = conn.execute(
             f"SELECT ca.id, ca.beacon_id, COALESCE(ca.name, cbn.name, ca.beacon_id), "
             f"ca.expected_device_ident, ca.status, ca.missing_since "
@@ -397,12 +460,21 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                 status = "present"
             elif moved_obs:
                 status = "equipment_moved"
+            elif expected_device and not device_reported.get(expected_device):
+                status = "device_offline"
+            elif not expected_device and device_scope and not any(device_reported.get(d) for d in device_scope):
+                status = "device_offline"
             else:
                 status = "missing"
             last_seen_ts = obs[0] if obs else None
             last_seen_device = obs[1] if obs else None
             distance = obs[2] if obs else None
             rssi = obs[3] if obs else None
+            offline_device = None
+            offline_since_ts = None
+            if status == "device_offline":
+                offline_device = expected_device or (device_scope[0] if len(device_scope) == 1 else None)
+                offline_since_ts = _latest_device_seen_before(conn, offline_device, end_ts) if offline_device else None
 
             missing_since = previous_missing_since
             if status == "missing":
@@ -435,6 +507,11 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                     ("equipment_moved", last_seen_ts, last_seen_device, moved_since, asset_id),
                 )
                 missing_since = moved_since
+            elif status == "device_offline":
+                conn.execute(
+                    f"UPDATE customer_assets SET status={ph}, missing_since=NULL, found_at=NULL WHERE id={ph}",
+                    ("device_offline", asset_id),
+                )
             else:
                 conn.execute(
                     f"UPDATE customer_assets SET status={ph}, last_seen_ts={ph}, last_seen_device_ident={ph}, missing_since=NULL, found_at=NULL WHERE id={ph}",
@@ -458,7 +535,7 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                 "expected_device_ident": expected_device,
                 "expected_device_label": _device_label(expected_device, device_labels) if expected_device else "Any assigned device",
                 "actual_device_label": _device_label(last_seen_device, device_labels) if last_seen_device else "",
-                "section_device": last_seen_device if status == "equipment_moved" else (expected_device or "__unassigned__"),
+                "section_device": last_seen_device if status == "equipment_moved" else (offline_device or expected_device or "__unassigned__"),
                 "distance_label": f"{float(distance):.2f} m" if distance is not None else "",
                 "rssi": rssi,
                 "missing_since": missing_since if status in ("missing", "equipment_moved") else "",
@@ -466,7 +543,9 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                     f"Expected at {_device_label(expected_device, device_labels)}; "
                     f"detected at {_device_label(last_seen_device, device_labels)}"
                     if status == "equipment_moved" else
-                    (f"Missing since {missing_since}" if status == "missing" and missing_since else "")
+                    (f"FMC/site offline since {_fmt_ts(offline_since_ts) or 'before this audit window'}; equipment was not marked missing."
+                     if status == "device_offline" else
+                     (f"Missing since {missing_since}" if status == "missing" and missing_since else ""))
                 ),
             }
             if status == "equipment_moved" and expected_device:
@@ -657,16 +736,17 @@ def _build_whatsapp_payload(conn, audit_id, recipients):
     audit, rows, labels = delivery_data
     audit_id, customer_id, customer_name, customer_slug, scheduled_for, window_start, window_end, _pdf_path, _status = audit
 
+    status_keys = ("present", "missing", "equipment_moved", "device_offline")
     site_map = {
         str(device_ident): {
             "device_ident": str(device_ident),
             "device_name": label,
-            "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+            "counts": {key: 0 for key in status_keys},
             "assets": [],
         }
         for device_ident, label in labels.items()
     }
-    summary = {"present": 0, "missing": 0, "equipment_moved": 0, "total": len(rows)}
+    summary = {"present": 0, "missing": 0, "equipment_moved": 0, "device_offline": 0, "total": len(rows)}
     moved_assets = []
 
     for beacon_id, asset_name, status, expected_ident, actual_ident, last_seen_ts, distance, rssi in rows:
@@ -681,7 +761,7 @@ def _build_whatsapp_payload(conn, audit_id, recipients):
             site_map[section_ident] = {
                 "device_ident": None if section_ident == "__unassigned__" else section_ident,
                 "device_name": "Any assigned device" if section_ident == "__unassigned__" else _device_label(section_ident, labels),
-                "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+                "counts": {key: 0 for key in status_keys},
                 "assets": [],
             }
 
@@ -708,7 +788,7 @@ def _build_whatsapp_payload(conn, audit_id, recipients):
                     site_map[actual_ident] = {
                         "device_ident": actual_ident,
                         "device_name": _device_label(actual_ident, labels),
-                        "counts": {"present": 0, "missing": 0, "equipment_moved": 0},
+                        "counts": {key: 0 for key in status_keys},
                         "assets": [],
                     }
                 site_map[actual_ident]["counts"]["equipment_moved"] += 1
@@ -720,7 +800,8 @@ def _build_whatsapp_payload(conn, audit_id, recipients):
         f"Audit time: {scheduled_for} Samoa time",
         (
             f"Summary: {summary['present']} in range, "
-            f"{summary['missing']} missing, {summary['equipment_moved']} moved"
+            f"{summary['missing']} missing, {summary['equipment_moved']} moved, "
+            f"{summary['device_offline']} site offline"
         ),
         "",
     ]
@@ -728,11 +809,15 @@ def _build_whatsapp_payload(conn, audit_id, recipients):
         counts = device["counts"]
         lines.append(
             f"{device['device_name']}: {counts['present']} in range, "
-            f"{counts['missing']} missing, {counts['equipment_moved']} moved"
+            f"{counts['missing']} missing, {counts['equipment_moved']} moved, "
+            f"{counts['device_offline']} site offline"
         )
         missing_names = [a["asset_name"] for a in device["assets"] if a["status"] == "missing"]
         if missing_names:
             lines.append(f"Missing: {', '.join(missing_names)}")
+        offline_names = [a["asset_name"] for a in device["assets"] if a["status"] == "device_offline"]
+        if offline_names:
+            lines.append(f"Site offline: {', '.join(offline_names)}")
     if moved_assets:
         lines.append("")
         lines.append("Equipment moved:")
@@ -982,8 +1067,8 @@ def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance
         f"SELECT ca.id, ca.customer_id, ca.name, ca.status, ca.expected_device_ident "
         f"FROM customer_assets ca "
         f"JOIN customer_devices cd ON cd.customer_id = ca.customer_id AND cd.device_ident = {ph} "
-        f"WHERE ca.beacon_id = {ph} AND ca.active = 1 AND ca.status IN ({ph},{ph})",
-        (device_ident, beacon_id, "missing", "equipment_moved"),
+        f"WHERE ca.beacon_id = {ph} AND ca.active = 1 AND ca.status IN ({ph},{ph},{ph})",
+        (device_ident, beacon_id, "missing", "equipment_moved", "device_offline"),
     ).fetchall()
 
     for asset_id, _customer_id, asset_name, _status, expected_device_ident in rows:

@@ -26,6 +26,8 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION",
     "ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT",
+    "CREATE TABLE IF NOT EXISTS device_observations (id BIGSERIAL PRIMARY KEY, observed_ts BIGINT, device_ident TEXT, lat DOUBLE PRECISION, lon DOUBLE PRECISION, created_at BIGINT)",
+    "CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)",
     "ALTER TABLE activity_reports ADD COLUMN IF NOT EXISTS customer_id BIGINT",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS audit_time TEXT DEFAULT '18:00'",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS delivery_time TEXT DEFAULT '18:30'",
@@ -126,6 +128,17 @@ def init_db():
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION")
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_lon DOUBLE PRECISION")
             cur.execute("ALTER TABLE device_states ADD COLUMN IF NOT EXISTS last_payload_ts BIGINT")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS device_observations (
+                    id BIGSERIAL PRIMARY KEY,
+                    observed_ts BIGINT,
+                    device_ident TEXT,
+                    lat DOUBLE PRECISION,
+                    lon DOUBLE PRECISION,
+                    created_at BIGINT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)")
 
             # notifications
             cur.execute("""
@@ -423,6 +436,17 @@ def init_db():
                 distance REAL
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS device_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_ts INTEGER,
+                device_ident TEXT,
+                lat REAL,
+                lon REAL,
+                created_at INTEGER
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beacon_states (
                 beacon_key TEXT PRIMARY KEY,
