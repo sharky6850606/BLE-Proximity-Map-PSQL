@@ -3,8 +3,8 @@ import requests
 from config import N8N_WEBHOOK_SECRET, N8N_WEBHOOK_TIMEOUT, N8N_WHATSAPP_WEBHOOK_URL
 
 
-def send_whatsapp_audit_webhook(payload):
-    """Post a daily audit payload to n8n and return a delivery result."""
+def send_whatsapp_webhook(payload):
+    """Post a WhatsApp payload to n8n and return a delivery result."""
     if not N8N_WHATSAPP_WEBHOOK_URL:
         return {
             "status": "skipped",
@@ -44,3 +44,8 @@ def send_whatsapp_audit_webhook(payload):
             "error": str(exc)[:500],
             "webhook_url": N8N_WHATSAPP_WEBHOOK_URL,
         }
+
+
+def send_whatsapp_audit_webhook(payload):
+    """Post a daily audit payload to n8n and return a delivery result."""
+    return send_whatsapp_webhook(payload)

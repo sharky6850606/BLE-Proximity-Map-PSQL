@@ -10,6 +10,7 @@ from routes import map_bp, flespi_bp, admin_bp
 from services.beacon_logic import format_samoa_time
 from services.reporting_service import start_daily_thread, generate_daily_report, generate_activity_report
 from services.evaluator_service import start_evaluator_thread
+from services.fmc_offline_alert_service import start_fmc_offline_alert_thread
 from services.auth_service import auth_bp, login_required, admin_required, is_admin, current_user, device_scope_clause, can_access_device, allowed_device_idents
 from services.audit_log_service import log_event
 from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR, TTL_SECONDS
@@ -57,6 +58,9 @@ if _threads_enabled_for_runtime() and os.getenv("DISABLE_DAILY_THREAD", "0") != 
 
 if _threads_enabled_for_runtime() and os.getenv("DISABLE_EVALUATOR_THREAD", "0") != "1":
     start_evaluator_thread()
+
+if _threads_enabled_for_runtime() and os.getenv("DISABLE_FMC_OFFLINE_ALERT_THREAD", "0") != "1":
+    start_fmc_offline_alert_thread()
 
 
 def samoa_iso_now():

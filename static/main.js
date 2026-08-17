@@ -26,7 +26,7 @@ let renameContext = null;       // { type: 'device'|'beacon', id: string }
 
 
 // Smart status alert thresholds (tuned for FMC data every 5 minutes)
-const OFFLINE_THRESHOLD_SECONDS = 15 * 60;   // 15 minutes with 5 min sends (~3 missed updates)
+const OFFLINE_THRESHOLD_SECONDS = 10 * 60;   // 10 minutes without an FMC heartbeat
 const DISTANCE_ALERT_THRESHOLD_METERS = 5;   // "Far" if beyond 5m
 
 // Smart alert state
@@ -180,6 +180,26 @@ function formatBeaconMeta(beacon) {
   return parts.length ? `<span class="beacon-distance">(${parts.join(' | ')})</span>` : '';
 }
 
+function formatDuration(seconds) {
+  const total = Math.max(0, Number(seconds || 0));
+  if (!Number.isFinite(total)) return '';
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hr`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
+function deviceStatusText(device) {
+  if (device.online) return device.timestamp || 'Online';
+  if (device.offline_since) {
+    const age = device.offline_age_seconds != null ? ` (${formatDuration(device.offline_age_seconds)} offline)` : '';
+    return `Offline since ${device.offline_since}${age}`;
+  }
+  return 'Offline - no heartbeat recorded';
+}
+
 // ---- Aggregate beacons across devices ----
 
 function aggregateBeacons(devices, beaconNames) {
@@ -230,13 +250,16 @@ function clearMapLayers() {
 
 
 // ---- Device Pin Icon (Colored) ----
-function makeDeviceIcon(color) {
+function makeDeviceIcon(color, offline = false) {
+  const fill = offline ? '#64748b' : color;
+  const stroke = offline ? '#ef4444' : 'white';
   return L.icon({
     iconUrl: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
       <svg xmlns="http://www.w3.org/2000/svg" width="32" height="48" viewBox="0 0 32 48">
-        <path fill="${color}" stroke="white" stroke-width="2"
+        <path fill="${fill}" stroke="${stroke}" stroke-width="2"
           d="M16 0C8 0 2 6 2 14c0 11 14 34 14 34s14-23 14-34C30 6 24 0 16 0z"/>
         <circle cx="16" cy="14" r="6" fill="white"/>
+        ${offline ? '<line x1="10" y1="20" x2="22" y2="8" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/>' : ''}
       </svg>
     `)}`,
     iconSize:[32,48],
@@ -259,18 +282,19 @@ function updateMap(devices, aggBeacons) {
     if (currentDeviceFilter && d.ident !== currentDeviceFilter) return;
     if (d.lat == null || d.lon == null) return;
 
-    const color = getDeviceColor(d.ident, d.color);
+    const color = d.online ? getDeviceColor(d.ident, d.color) : '#64748b';
     const latlng = [d.lat, d.lon];
+    const statusText = deviceStatusText(d);
 
     const tooltipHtml = `
       <div style="font-size:0.8rem;">
         <div><strong>${d.name || d.ident}</strong></div>
         <div>ID: ${d.ident}</div>
-        <div>Last: ${d.timestamp || '-'}</div>
+        <div>Status: ${statusText}</div>
       </div>
     `;
 
-    const icon = makeDeviceIcon(color);
+    const icon = makeDeviceIcon(color, !d.online);
     const marker = L.marker(latlng, { icon });
 
     marker.bindTooltip(tooltipHtml, {
@@ -382,6 +406,8 @@ function updateSidebar(devices, beaconNames) {
     const ident = d.ident;
     const color = getDeviceColor(ident, d.color || '#3b82f6');
     const name = d.name || ident;
+    const statusText = deviceStatusText(d);
+    const statusBadge = d.online ? '<span class="device-status-badge online">Online</span>' : '<span class="device-status-badge offline">Offline</span>';
 
     if (currentDeviceFilter && ident !== currentDeviceFilter) {
       // Still show greyed out? For now, hide others completely.
@@ -389,7 +415,7 @@ function updateSidebar(devices, beaconNames) {
     }
 
     const deviceBlock = document.createElement('div');
-    deviceBlock.className = 'device-block';
+    deviceBlock.className = `device-block ${d.online ? '' : 'device-block-offline'}`;
 
     const beaconsForDevice = (d.beacons || []).map(b => {
       const id = b.id;
@@ -425,6 +451,7 @@ function updateSidebar(devices, beaconNames) {
         <div class="device-block-main">
           <div class="device-block-title-row">
             <span class="device-block-title">${name}</span>
+            ${statusBadge}
             <span class="device-beacon-count">${beaconCount} beacon${beaconCount === 1 ? '' : 's'}</span>
             <button
               class="icon-button rename-device-btn"
@@ -437,14 +464,14 @@ function updateSidebar(devices, beaconNames) {
           </div>
           <div class="device-block-sub">
             <span class="device-block-id">${ident}</span>
-            <span class="device-block-time">${d.timestamp || ''}</span>
+            <span class="device-block-time">${statusText}</span>
           </div>
         </div>
       </div>
       <div class="device-beacons-list ${isCollapsed ? 'is-collapsed' : ''}">
         ${
           beaconCount === 0
-            ? '<div class="device-empty">No beacons</div>'
+            ? `<div class="device-empty">${d.online ? 'No beacons' : 'No live beacons - FMC offline'}</div>`
             : isCollapsed
               ? `<div class="device-collapsed-summary">${beaconCount} beacon${beaconCount === 1 ? '' : 's'} hidden</div>`
               : beaconsForDevice

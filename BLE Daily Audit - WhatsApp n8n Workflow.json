@@ -1,0 +1,397 @@
+{
+  "name": "BLE Daily Equipment Audit - WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ble-daily-equipment-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "055c262e-7893-433f-a216-711e963b4211",
+      "name": "BLE Audit Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1440,
+        160
+      ],
+      "webhookId": "88694358-d7db-4cbf-97ae-1cb186de7a72"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "config-phone-id",
+              "name": "WA_PHONE_NUMBER_ID",
+              "value": "REPLACE_WITH_META_PHONE_NUMBER_ID",
+              "type": "string"
+            },
+            {
+              "id": "config-access-token",
+              "name": "WA_ACCESS_TOKEN",
+              "value": "EAAW6SYtV0yUBRpxG7lMBPmV0A3AfgNzfjacXqozIuboCm4X32yNP4bPBB5PVAavpM0cM15DdnikEGWquNQZCkb1G03311CREs5Qrgqx6vhiXPNMqZAwQzE4Uv0HZBIVntZA9Ohq8DH519FROq1n43ZB784ttghO1P5QBqYlVZB2NjzY5UqjnfONw6cxyED4EdQmZC5Nx2WExz3iEgxq",
+              "type": "string"
+            },
+            {
+              "id": "config-template",
+              "name": "WA_TEMPLATE_NAME",
+              "value": "ble_notification",
+              "type": "string"
+            },
+            {
+              "id": "config-fmc-offline-template",
+              "name": "FMC_OFFLINE_TEMPLATE_NAME",
+              "value": "ble_fmc_offline",
+              "type": "string"
+            },
+            {
+              "id": "config-language",
+              "name": "WA_LANGUAGE_CODE",
+              "value": "en",
+              "type": "string"
+            },
+            {
+              "id": "config-secret",
+              "name": "WEBHOOK_SECRET",
+              "value": "REPLACE_WITH_THE_SAME_N8N_WEBHOOK_SECRET_USED_BY_RENDER",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "41613426-c2cd-40d0-a6db-42b2c206666d",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1216,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body ?? input;\nconst headers = input.headers ?? {};\nconst suppliedSecret = String(headers[\"x-webhook-secret\"] ?? headers[\"X-Webhook-Secret\"] ?? \"\");\nconst expectedSecret = String(input.WEBHOOK_SECRET ?? \"\");\nconst recipients = Array.isArray(body.whatsapp?.recipients) ? body.whatsapp.recipients : [];\nconst supportedEvents = [\"daily_equipment_audit\", \"fmc_offline\"];\nconst validEvent = supportedEvents.includes(String(body.event ?? \"\")) && Number(body.version) === 1;\nconst configured = expectedSecret && !expectedSecret.startsWith(\"REPLACE_\") && input.WA_PHONE_NUMBER_ID && !String(input.WA_PHONE_NUMBER_ID).startsWith(\"REPLACE_\") && input.WA_ACCESS_TOKEN && !String(input.WA_ACCESS_TOKEN).startsWith(\"REPLACE_\");\nconst authorized = configured && suppliedSecret === expectedSecret;\nlet error = \"\";\nif (!configured) error = \"n8n WhatsApp workflow configuration is incomplete\";\nelse if (!authorized) error = \"Invalid or missing X-Webhook-Secret\";\nelse if (!validEvent) error = \"Unsupported webhook event or version\";\nelse if (!recipients.length) error = \"No WhatsApp recipients were supplied\";\nreturn [{ json: { ...input, body, recipients, authorized, valid_event: validEvent, has_recipients: recipients.length > 0, request_valid: authorized && validEvent && recipients.length > 0, validation_error: error } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "dbac4b61-c33f-42d9-ba29-f175b800bc1e",
+      "name": "Validate Audit Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -992,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "valid-condition",
+              "leftValue": "={{ $json.request_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b64ba209-75b3-447a-ae78-aef376ff7526",
+      "name": "Request Is Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -768,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": $json.validation_error, \"timestamp\": $now.toISO() } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "a39ca3c3-72ba-42ab-9219-66bc29d05423",
+      "name": "Reject Invalid Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -544,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body;\n\nfunction compact(value, fallback = \"\") {\n  return String(value ?? fallback).replace(/[\\n\\r\\t]+/g, \" \").replace(/\\s{2,}/g, \" \").trim();\n}\n\nfunction truncate(value, maxLength) {\n  const text = compact(value);\n  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;\n}\n\nfunction auditTemplateParameters() {\n  const customerName = compact(body.customer?.name, \"Customer\");\n  const auditTime = compact(body.audit?.scheduled_for, \"Unknown\");\n  const summary = body.summary ?? {};\n  const devices = Array.isArray(body.devices) ? body.devices : [];\n  const siteLines = devices.map((device) => {\n    const counts = device.counts ?? {};\n    const name = compact(device.device_name ?? device.device_ident, \"Device\");\n    const missingNames = (device.assets ?? []).filter((asset) => asset.status === \"missing\").map((asset) => compact(asset.asset_name)).filter(Boolean);\n    const movedNames = (device.assets ?? []).filter((asset) => asset.status === \"equipment_moved\").map((asset) => `${compact(asset.asset_name, \"Asset\")} to ${compact(asset.detected_device_name ?? asset.detected_device_ident, \"another site\")}`).filter(Boolean);\n    const offlineNames = (device.assets ?? []).filter((asset) => asset.status === \"device_offline\").map((asset) => compact(asset.asset_name)).filter(Boolean);\n    let line = `${name}: ${Number(counts.present ?? 0)} in range, ${Number(counts.missing ?? 0)} missing, ${Number(counts.equipment_moved ?? 0)} moved, ${Number(counts.device_offline ?? 0)} site offline`;\n    if (missingNames.length) line += `; Missing: ${missingNames.join(\", \")}`;\n    if (movedNames.length) line += `; Moved: ${movedNames.join(\", \")}`;\n    if (offlineNames.length) line += `; Site offline: ${offlineNames.join(\", \")}`;\n    return line;\n  });\n  const siteSummary = truncate(siteLines.join(\" | \") || \"No device details were supplied.\", 950);\n  return {\n    templateName: compact(input.WA_TEMPLATE_NAME ?? body.whatsapp?.template_name, \"ble_notification\"),\n    languageCode: compact(body.whatsapp?.language ?? input.WA_LANGUAGE_CODE, \"en\"),\n    parameters: [\n      customerName,\n      auditTime,\n      String(Number(summary.present ?? 0)),\n      String(Number(summary.missing ?? 0)),\n      String(Number(summary.equipment_moved ?? 0)),\n      String(Number(summary.device_offline ?? 0)),\n      siteSummary,\n    ],\n  };\n}\n\nfunction fmcOfflineTemplateParameters() {\n  const device = body.device ?? {};\n  return {\n    templateName: compact(input.FMC_OFFLINE_TEMPLATE_NAME ?? body.whatsapp?.template_name, \"ble_fmc_offline\"),\n    languageCode: compact(body.whatsapp?.language ?? input.WA_LANGUAGE_CODE, \"en\"),\n    parameters: [\n      compact(body.customer?.name, \"Customer\"),\n      compact(device.device_name, \"Site\"),\n      compact(device.device_ident, \"Unknown\"),\n      compact(device.last_heartbeat, \"No heartbeat recorded\"),\n      compact(device.offline_for, \"10 minutes\"),\n    ],\n  };\n}\n\nconst prepared = body.event === \"fmc_offline\" ? fmcOfflineTemplateParameters() : auditTemplateParameters();\nconst common = {\n  WA_PHONE_NUMBER_ID: input.WA_PHONE_NUMBER_ID,\n  WA_ACCESS_TOKEN: input.WA_ACCESS_TOKEN,\n  template_name: prepared.templateName,\n  language_code: prepared.languageCode,\n  template_parameters: prepared.parameters,\n  event: body.event,\n  customer_name: compact(body.customer?.name, \"Customer\"),\n  audit_id: body.audit?.id ?? null,\n  device_ident: body.device?.device_ident ?? null,\n};\n\nreturn input.recipients.map((recipient) => ({\n  json: {\n    ...common,\n    phone_number: String(recipient).replace(/\\D/g, \"\"),\n  },\n})).filter((item) => item.json.phone_number);",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "57ed3c86-ed26-4679-8aa7-43d86babf32e",
+      "name": "Prepare Recipient Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v22.0/{{ $json.WA_PHONE_NUMBER_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.WA_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"messaging_product\": \"whatsapp\", \"to\": $json.phone_number, \"type\": \"template\", \"template\": { \"name\": $json.template_name, \"language\": { \"code\": $json.language_code }, \"components\": [{ \"type\": \"body\", \"parameters\": ($json.template_parameters || []).map((text) => ({ \"type\": \"text\", \"text\": String(text ?? \"\") })) }] } } }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "9c15ad33-14d0-4a44-9ef1-54fce5386910",
+      "name": "Send WhatsApp Audit Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -304,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result-phone",
+              "name": "phone_number",
+              "value": "={{ $('Prepare Recipient Messages').item.json.phone_number }}",
+              "type": "string"
+            },
+            {
+              "id": "result-success",
+              "name": "success",
+              "value": "={{ Boolean($json.body?.messages?.[0]?.id ?? $json.messages?.[0]?.id) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "result-message",
+              "name": "message_id",
+              "value": "={{ $json.body?.messages?.[0]?.id ?? $json.messages?.[0]?.id ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "result-error",
+              "name": "error",
+              "value": "={{ $json.body?.error?.message ?? $json.error?.message ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "result-error-title",
+              "name": "error_title",
+              "value": "={{ $json.body?.error?.error_user_title ?? $json.error?.error_user_title ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "result-error-details",
+              "name": "error_details",
+              "value": "={{ $json.body?.error?.error_data?.details ?? $json.error?.error_data?.details ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "result-trace",
+              "name": "fbtrace_id",
+              "value": "={{ $json.body?.error?.fbtrace_id ?? $json.error?.fbtrace_id ?? null }}",
+              "type": "string"
+            },
+            {
+              "id": "result-status",
+              "name": "status_code",
+              "value": "={{ $json.statusCode ?? null }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e1184e0b-1393-40fe-9ef9-6d28cb963c5a",
+      "name": "Build Delivery Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -64,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deliveries = $input.all().map((item) => item.json);\nconst sent = deliveries.filter((item) => item.success).length;\nconst failed = deliveries.length - sent;\nreturn [{ json: { success: failed === 0, provider: \"whatsapp\", sent, failed, deliveries, timestamp: new Date().toISOString() } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "34bd22a0-d5c7-4246-8d9d-4d2cc3b2a906",
+      "name": "Summarize Deliveries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "296b510a-11d0-48ea-803f-924debf31e85",
+      "name": "Return Delivery Summary",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        416,
+        64
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "BLE Audit Webhook": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "Validate Audit Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Audit Request": {
+      "main": [
+        [
+          {
+            "node": "Request Is Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Is Valid": {
+      "main": [
+        [
+          {
+            "node": "Prepare Recipient Messages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Recipient Messages": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Audit Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Audit Template": {
+      "main": [
+        [
+          {
+            "node": "Build Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Delivery Result": {
+      "main": [
+        [
+          {
+            "node": "Summarize Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Return Delivery Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "519c347b-3851-476a-a524-bbffcb68dd56",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

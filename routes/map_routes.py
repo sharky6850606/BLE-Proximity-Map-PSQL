@@ -1,7 +1,7 @@
 import time
 from flask import Blueprint, jsonify, render_template, redirect, url_for, request
 
-from config import TTL_SECONDS
+from config import FMC_OFFLINE_ALERT_AFTER_SECONDS, TTL_SECONDS
 from database import get_db
 from services.audit_log_service import log_event
 from services.beacon_logic import latest_messages, format_samoa_time
@@ -134,9 +134,10 @@ def data():
             device_beacons = beacons_by_device.get(did, [])
             device_beacons.sort(key=lambda x: (x.get("distance") is None, x.get("distance") or 9999))
             timestamp_raw = int(last_seen_ts) if last_seen_ts is not None else None
+            age_seconds = (now_ts - timestamp_raw) if timestamp_raw is not None else None
             online = bool(
                 timestamp_raw is not None
-                and (now_ts - timestamp_raw) <= (max_age * 2)
+                and age_seconds <= FMC_OFFLINE_ALERT_AFTER_SECONDS
             )
 
             out.append({
@@ -150,6 +151,9 @@ def data():
                 "name": meta.get("name") or None,
                 "color": meta.get("color") or None,
                 "online": online,
+                "offline": not online,
+                "offline_age_seconds": age_seconds,
+                "offline_since": format_samoa_time(timestamp_raw) if timestamp_raw is not None and not online else None,
             })
 
     except Exception as e:

@@ -606,6 +606,11 @@ html, body {
   margin-bottom: 8px;
 }
 
+.device-block-offline {
+  border-color: rgba(239,68,68,0.75);
+  background: #151923;
+}
+
 .device-block-header {
   display: flex;
   align-items: center;
@@ -646,7 +651,7 @@ html, body {
 
 .device-block-title-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 6px;
 }
@@ -669,6 +674,27 @@ html, body {
   background: rgba(59,130,246,0.12);
   font-size: 0.68rem;
   white-space: nowrap;
+}
+
+.device-status-badge {
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.device-status-badge.online {
+  background: rgba(34,197,94,0.16);
+  border: 1px solid rgba(34,197,94,0.45);
+  color: #86efac;
+}
+
+.device-status-badge.offline {
+  background: rgba(239,68,68,0.16);
+  border: 1px solid rgba(239,68,68,0.5);
+  color: #fca5a5;
 }
 
 .device-block-sub {

@@ -1,6 +1,7 @@
 import time
 from flask import Blueprint, request
 
+from config import FMC_OFFLINE_ALERT_AFTER_SECONDS
 from database import get_db
 from services.beacon_logic import simplify_message, latest_messages
 from services.audit_service import mark_asset_found_if_missing
@@ -9,7 +10,7 @@ from services.uptime_service import log_uptime_snapshot
 flespi_bp = Blueprint("flespi", __name__)
 
 # Keep online across expected staggered flespi packets (device/beacon can arrive separately).
-OFFLINE_AFTER_SEC = 15 * 60
+OFFLINE_AFTER_SEC = FMC_OFFLINE_ALERT_AFTER_SECONDS
 
 
 def _extract_messages(payload):

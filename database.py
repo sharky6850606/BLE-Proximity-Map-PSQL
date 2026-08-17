@@ -34,6 +34,8 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp_recipients TEXT",
     "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_sent_at TEXT",
     "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_last_attempt_at TEXT",
+    "CREATE TABLE IF NOT EXISTS fmc_offline_alerts (id BIGSERIAL PRIMARY KEY, customer_id BIGINT REFERENCES customers(id), device_ident TEXT NOT NULL, offline_since_ts BIGINT, alert_sent_at TEXT, recovered_at TEXT, UNIQUE(customer_id, device_ident))",
+    "CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_webhook_logs_audit ON webhook_logs(audit_run_id)",
@@ -139,6 +141,18 @@ def init_db():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fmc_offline_alerts (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    device_ident TEXT NOT NULL,
+                    offline_since_ts BIGINT,
+                    alert_sent_at TEXT,
+                    recovered_at TEXT,
+                    UNIQUE(customer_id, device_ident)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
 
             # notifications
             cur.execute("""
@@ -447,6 +461,18 @@ def init_db():
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fmc_offline_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                device_ident TEXT NOT NULL,
+                offline_since_ts INTEGER,
+                alert_sent_at TEXT,
+                recovered_at TEXT,
+                UNIQUE(customer_id, device_ident)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beacon_states (
                 beacon_key TEXT PRIMARY KEY,
