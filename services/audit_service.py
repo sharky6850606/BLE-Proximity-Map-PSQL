@@ -174,6 +174,18 @@ def _device_reported_in_window(conn, device_ident, start_ts, end_ts):
     if row:
         return True
 
+    # If a beacon was observed through this FMC during the audit window, the
+    # FMC/site was definitely reporting even if the separate device heartbeat
+    # row was not written for that packet.
+    row = conn.execute(
+        f"SELECT 1 FROM beacon_observations "
+        f"WHERE device_ident = {ph} AND observed_ts >= {ph} AND observed_ts <= {ph} "
+        "LIMIT 1",
+        (str(device_ident), start_ts, end_ts),
+    ).fetchone()
+    if row:
+        return True
+
     # Fallback for data that existed before device_observations was added.
     row = conn.execute(
         f"SELECT last_payload_ts, last_seen_ts FROM device_states WHERE device_ident = {ph}",
