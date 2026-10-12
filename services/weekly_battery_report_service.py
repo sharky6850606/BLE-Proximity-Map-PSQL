@@ -127,7 +127,7 @@ def send_due_weekly_battery_reports(now_local=None):
         hour=WEEKLY_BATTERY_REPORT_HOUR,
         minute=WEEKLY_BATTERY_REPORT_MINUTE,
     )
-    if now_local < due_at:
+    if now_local.weekday() != 0 or now_local < due_at:
         return 0
 
     week_start = week_start_dt.strftime("%Y-%m-%d")

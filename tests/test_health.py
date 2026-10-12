@@ -452,8 +452,10 @@ class ApplicationHealthTests(unittest.TestCase):
             "services.weekly_battery_report_service.send_report_email_with_results",
             return_value=delivery,
         ) as send_email:
+            self.assertEqual(send_due_weekly_battery_reports(monday_at_eight - timedelta(minutes=1)), 0)
             self.assertEqual(send_due_weekly_battery_reports(monday_at_eight), 1)
             self.assertEqual(send_due_weekly_battery_reports(monday_at_eight + timedelta(hours=1)), 0)
+            self.assertEqual(send_due_weekly_battery_reports(monday_at_eight + timedelta(days=1)), 0)
 
         self.assertEqual(send_email.call_count, 1)
         recipients, subject, body = send_email.call_args.args
