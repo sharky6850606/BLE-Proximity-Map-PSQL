@@ -28,6 +28,8 @@ from database import get_db, init_db  # noqa: E402
 from services.audit_service import run_customer_audit  # noqa: E402
 from services.beacon_logic import _beacon_state, latest_messages  # noqa: E402
 from services.evaluator_service import run_once as run_evaluator_once  # noqa: E402
+from services.fmc_offline_alert_service import check_and_send_fmc_offline_alerts  # noqa: E402
+from services.weekly_battery_report_service import send_due_weekly_battery_reports  # noqa: E402
 
 
 class ApplicationHealthTests(unittest.TestCase):
@@ -407,6 +409,123 @@ class ApplicationHealthTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(row[0], "in")
+
+    def test_weekly_battery_report_includes_all_customer_beacons_once(self):
+        customer_id = self._create_customer_fixture()
+        now = int(time.time())
+        conn = get_db()
+        try:
+            conn.execute(
+                "INSERT INTO customer_devices (customer_id, device_ident, label, created_at) VALUES (?,?,?,?)",
+                (customer_id, "FMC-HEALTH-2", "Warehouse", "test"),
+            )
+            conn.execute(
+                "INSERT INTO customer_assets "
+                "(customer_id, beacon_id, name, expected_device_ident, active, status, created_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (customer_id, "BEACON-HEALTH-2", "Warehouse Asset", "FMC-HEALTH-2", 1, "present", "test"),
+            )
+            conn.execute(
+                "INSERT INTO beacon_states "
+                "(beacon_key, device_ident, beacon_id, last_seen_ts, last_battery_voltage, last_battery_percent) "
+                "VALUES (?,?,?,?,?,?)",
+                ("FMC-HEALTH-1:BEACON-HEALTH-1", "FMC-HEALTH-1", "BEACON-HEALTH-1", now, 2.90, 85),
+            )
+            conn.execute(
+                "INSERT INTO beacon_states "
+                "(beacon_key, device_ident, beacon_id, last_seen_ts, last_battery_voltage, last_battery_percent) "
+                "VALUES (?,?,?,?,?,?)",
+                ("FMC-HEALTH-2:BEACON-HEALTH-2", "FMC-HEALTH-2", "BEACON-HEALTH-2", now, 2.20, 10),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        delivery = [{
+            "recipient": "customer@example.test",
+            "provider": "smtp",
+            "status": "sent",
+            "error": "",
+        }]
+        monday_at_eight = datetime(2026, 10, 12, 8, 0, 0)
+        with patch(
+            "services.weekly_battery_report_service.send_report_email_with_results",
+            return_value=delivery,
+        ) as send_email:
+            self.assertEqual(send_due_weekly_battery_reports(monday_at_eight), 1)
+            self.assertEqual(send_due_weekly_battery_reports(monday_at_eight + timedelta(hours=1)), 0)
+
+        self.assertEqual(send_email.call_count, 1)
+        recipients, subject, body = send_email.call_args.args
+        self.assertEqual(recipients, ["customer@example.test"])
+        self.assertIn("Weekly Beacon Battery Report", subject)
+        self.assertIn("Health Asset (BEACON-HEALTH-1): 85% / 2.90V", body)
+        self.assertIn("Warehouse Asset (BEACON-HEALTH-2): 10% / 2.20V - LOW BATTERY", body)
+
+        conn = get_db()
+        try:
+            report = conn.execute(
+                "SELECT week_start, beacon_count, status FROM weekly_battery_reports WHERE customer_id=?",
+                (customer_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(tuple(report), ("2026-10-12", 2, "sent"))
+
+    def test_offline_device_sends_one_customer_email_per_incident(self):
+        customer_id = self._create_customer_fixture()
+        old_seen = int(time.time()) - 3600
+        conn = get_db()
+        try:
+            conn.execute(
+                "INSERT INTO device_states (device_key, device_ident, state, online, last_seen_ts) "
+                "VALUES (?,?,?,?,?)",
+                ("FMC-HEALTH-1", "FMC-HEALTH-1", "offline", 0, old_seen),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        email_delivery = [{
+            "recipient": "customer@example.test",
+            "provider": "smtp",
+            "status": "sent",
+            "error": "",
+        }]
+        webhook_delivery = {
+            "status": "sent", "http_status": 200, "error": "", "webhook_url": "https://example.test/hook"
+        }
+        with patch(
+            "services.fmc_offline_alert_service.send_report_email_with_results",
+            return_value=email_delivery,
+        ) as send_email, patch(
+            "services.fmc_offline_alert_service.send_whatsapp_webhook",
+            return_value=webhook_delivery,
+        ) as send_whatsapp:
+            self.assertEqual(check_and_send_fmc_offline_alerts(), 1)
+            self.assertEqual(check_and_send_fmc_offline_alerts(), 0)
+
+        self.assertEqual(send_email.call_count, 1)
+        self.assertEqual(send_whatsapp.call_count, 1)
+        recipients, subject, body = send_email.call_args.args
+        self.assertEqual(recipients, ["customer@example.test"])
+        self.assertEqual(subject, "Device offline - Main Site")
+        self.assertIn("Please check the FMC power, SIM/data connection", body)
+
+        conn = get_db()
+        try:
+            email_log = conn.execute(
+                "SELECT send_type, status FROM email_logs WHERE customer_id=? AND send_type=?",
+                (customer_id, "fmc_offline"),
+            ).fetchone()
+            incident_count = conn.execute(
+                "SELECT COUNT(*) FROM fmc_offline_alerts WHERE customer_id=?",
+                (customer_id,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(tuple(email_log), ("fmc_offline", "sent"))
+        self.assertEqual(incident_count, 1)
 
 
 if __name__ == "__main__":

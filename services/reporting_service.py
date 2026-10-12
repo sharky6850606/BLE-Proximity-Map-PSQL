@@ -309,10 +309,12 @@ def _daily_loop():
                 run_due_customer_audits,
                 send_due_customer_deliveries,
             )
+            from services.weekly_battery_report_service import send_due_weekly_battery_reports
 
             now_local = _local_dt_from_unix()
             run_due_customer_audits(now_local)
             send_due_customer_deliveries(now_local)
+            send_due_weekly_battery_reports(now_local)
             time.sleep(30)
         except Exception as e:
             print(f"[daily-loop] error: {e}")

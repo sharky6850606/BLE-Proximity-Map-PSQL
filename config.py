@@ -65,3 +65,10 @@ FLESPI_WEBHOOK_SECRET = os.getenv("FLESPI_WEBHOOK_SECRET", "").strip()
 # =============================
 FMC_OFFLINE_ALERT_AFTER_SECONDS = int(os.getenv("FMC_OFFLINE_ALERT_AFTER_SECONDS", "600"))
 FMC_OFFLINE_ALERT_CHECK_SECONDS = int(os.getenv("FMC_OFFLINE_ALERT_CHECK_SECONDS", "60"))
+
+# =============================
+# Weekly beacon battery report
+# =============================
+WEEKLY_BATTERY_REPORT_HOUR = int(os.getenv("WEEKLY_BATTERY_REPORT_HOUR", "8"))
+WEEKLY_BATTERY_REPORT_MINUTE = int(os.getenv("WEEKLY_BATTERY_REPORT_MINUTE", "0"))
+WEEKLY_BATTERY_LOW_PERCENT = int(os.getenv("WEEKLY_BATTERY_LOW_PERCENT", "20"))

@@ -35,6 +35,8 @@ POSTGRES_MIGRATIONS = [
     "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_sent_at TEXT",
     "ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS whatsapp_last_attempt_at TEXT",
     "CREATE TABLE IF NOT EXISTS fmc_offline_alerts (id BIGSERIAL PRIMARY KEY, customer_id BIGINT REFERENCES customers(id), device_ident TEXT NOT NULL, offline_since_ts BIGINT, alert_sent_at TEXT, recovered_at TEXT, UNIQUE(customer_id, device_ident))",
+    "CREATE TABLE IF NOT EXISTS weekly_battery_reports (id BIGSERIAL PRIMARY KEY, customer_id BIGINT REFERENCES customers(id), week_start TEXT NOT NULL, scheduled_for TEXT, attempted_at TEXT, sent_at TEXT, beacon_count INTEGER DEFAULT 0, status TEXT, UNIQUE(customer_id, week_start))",
+    "CREATE INDEX IF NOT EXISTS idx_weekly_battery_reports_customer ON weekly_battery_reports(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_audit ON email_logs(audit_run_id)",
     "CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)",
@@ -238,6 +240,20 @@ def init_db():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS weekly_battery_reports (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    week_start TEXT NOT NULL,
+                    scheduled_for TEXT,
+                    attempted_at TEXT,
+                    sent_at TEXT,
+                    beacon_count INTEGER DEFAULT 0,
+                    status TEXT,
+                    UNIQUE(customer_id, week_start)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_weekly_battery_reports_customer ON weekly_battery_reports(customer_id)")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_users (
                     id BIGSERIAL PRIMARY KEY,
@@ -475,6 +491,20 @@ def init_db():
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_battery_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER REFERENCES customers(id),
+                week_start TEXT NOT NULL,
+                scheduled_for TEXT,
+                attempted_at TEXT,
+                sent_at TEXT,
+                beacon_count INTEGER DEFAULT 0,
+                status TEXT,
+                UNIQUE(customer_id, week_start)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_weekly_battery_reports_customer ON weekly_battery_reports(customer_id)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beacon_states (
                 beacon_key TEXT PRIMARY KEY,

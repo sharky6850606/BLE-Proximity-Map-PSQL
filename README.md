@@ -58,6 +58,19 @@ administrator and customer pages, tenant device isolation, Flespi ingestion,
 webhook authentication, map data, analytics, PDF generation, daily audit
 classification, found-again handling, and evaluator notifications.
 
+Every Monday at 8:00 AM Samoa time, each active customer receives one consolidated
+email listing the latest battery level for every active beacon assigned to them,
+grouped across all of their sites. Levels at or below 20% are flagged, while
+beacons without battery telemetry remain visible as unknown. The hour, minute,
+and low-battery threshold can be changed with `WEEKLY_BATTERY_REPORT_HOUR`,
+`WEEKLY_BATTERY_REPORT_MINUTE`, and `WEEKLY_BATTERY_LOW_PERCENT`.
+
+When an assigned FMC has not reported for the configured offline interval, all
+active users for that customer receive an email with the site, device identifier,
+last heartbeat, outage duration, and suggested checks. The existing optional
+WhatsApp alert is sent as well. Each channel is attempted once per outage and the
+incident lock resets after the FMC reports again.
+
 The latest verified baseline and outstanding limitations are recorded in
 `docs/HEALTH_CHECK_2026-10-07.md`.
 
