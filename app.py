@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify, render_template, send_file, redirect, url_for, abort
 import json
 
@@ -13,7 +13,7 @@ from services.evaluator_service import start_evaluator_thread
 from services.fmc_offline_alert_service import start_fmc_offline_alert_thread
 from services.auth_service import auth_bp, login_required, admin_required, is_admin, current_user, device_scope_clause, can_access_device, allowed_device_idents
 from services.audit_log_service import log_event
-from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR, TTL_SECONDS
+from config import ACTIVITY_REPORTS_DIR, AUDIT_REPORTS_DIR, REPORTS_DIR, SAMOA_OFFSET_HOURS, TTL_SECONDS
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-change-me")
@@ -467,7 +467,10 @@ def analytics_page():
         notif_scope_sql, notif_scope_params = device_scope_clause(conn, "n.device_ident", user=user)
         now_ts = time.time()
         # Analytics window resets daily at 12:00 AM (midnight) Samoa time.
-        now_local_dt = datetime.utcfromtimestamp(now_ts) + timedelta(hours=13)
+        now_local_dt = (
+            datetime.fromtimestamp(now_ts, timezone.utc).replace(tzinfo=None)
+            + timedelta(hours=SAMOA_OFFSET_HOURS)
+        )
         midnight_local_dt = now_local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
         if now_local_dt < midnight_local_dt:
             midnight_local_dt = midnight_local_dt - timedelta(days=1)
@@ -615,7 +618,11 @@ def analytics_page():
         if not notification_events:
             try:
                 obs_scope_sql, obs_scope_params = device_scope_clause(conn, "bo.device_ident", user=user)
-                midnight_utc_ts = int((midnight_local_dt - timedelta(hours=13)).timestamp())
+                midnight_utc_ts = int(
+                    (midnight_local_dt - timedelta(hours=SAMOA_OFFSET_HOURS))
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
                 obs_rows_for_events = conn.execute(
                     "SELECT COALESCE(cbn.name, bn.name, bo.beacon_id, 'Unknown') AS name, "
                     "bo.observed_ts, bo.distance, bo.beacon_id, bo.device_ident "
@@ -631,7 +638,11 @@ def analytics_page():
 
             for name, observed_ts, distance, beacon_id, device_ident in obs_rows_for_events:
                 try:
-                    event_dt = datetime.utcfromtimestamp(float(observed_ts)) + timedelta(hours=13)
+                    event_dt = (
+                        datetime.fromtimestamp(float(observed_ts), timezone.utc)
+                        .replace(tzinfo=None)
+                        + timedelta(hours=SAMOA_OFFSET_HOURS)
+                    )
                 except Exception:
                     continue
                 typ = "still_in" if distance is not None and float(distance) <= 5.0 else "still_out"
@@ -716,7 +727,11 @@ def analytics_page():
         if not presence:
             try:
                 obs_scope_sql, obs_scope_params = device_scope_clause(conn, "bo.device_ident", user=user)
-                midnight_utc_ts = int((midnight_local_dt - timedelta(hours=13)).timestamp())
+                midnight_utc_ts = int(
+                    (midnight_local_dt - timedelta(hours=SAMOA_OFFSET_HOURS))
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
                 obs_rows = conn.execute(
                     "SELECT COALESCE(cbn.name, bn.name, bo.beacon_id, 'Unknown') AS name, "
                     "bo.observed_ts, bo.distance "
@@ -731,7 +746,11 @@ def analytics_page():
                 obs_rows = []
             for name, observed_ts, distance in obs_rows:
                 try:
-                    obs_dt = datetime.utcfromtimestamp(float(observed_ts)) + timedelta(hours=13)
+                    obs_dt = (
+                        datetime.fromtimestamp(float(observed_ts), timezone.utc)
+                        .replace(tzinfo=None)
+                        + timedelta(hours=SAMOA_OFFSET_HOURS)
+                    )
                 except Exception:
                     continue
                 state = "in" if distance is not None and float(distance) <= 5.0 else "still_out"
@@ -908,4 +927,5 @@ def api_rename_device():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    debug_enabled = os.getenv("FLASK_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=debug_enabled)

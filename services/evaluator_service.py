@@ -100,6 +100,7 @@ def run_once():
                     event_time=event_time,
                     device_ident=device_ident,
                     distance=last_distance,
+                    conn=conn,
                 )
                 cur.execute(
                     f"UPDATE beacon_states SET active=0, last_status_ts={ph} WHERE beacon_key={ph}",
@@ -130,6 +131,7 @@ def run_once():
                 event_time=event_time,
                 device_ident=device_ident,
                 distance=dist,
+                conn=conn,
             )
             cur.execute(
                 f"UPDATE beacon_states SET state={ph}, last_change_ts={ph}, last_status_ts={ph}, active=1 WHERE beacon_key={ph}",
@@ -155,6 +157,7 @@ def run_once():
                 event_time=event_time,
                 device_ident=device_ident,
                 distance=dist,
+                conn=conn,
             )
             cur.execute(
                 f"UPDATE beacon_states SET last_status_ts={ph}, active=1 WHERE beacon_key={ph}",
@@ -176,5 +179,5 @@ def _loop():
 def start_evaluator_thread():
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
-    print("[evaluator] thread started ✅")
+    print("[evaluator] thread started")
     return t

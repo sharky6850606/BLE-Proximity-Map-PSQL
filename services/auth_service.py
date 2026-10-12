@@ -188,7 +188,9 @@ def login():
                 )
                 conn.commit()
                 next_url = request.args.get("next") or ""
-                if next_url.startswith("/"):
+                # A path beginning with // is a scheme-relative external URL,
+                # not an in-app path. Reject it to prevent an open redirect.
+                if next_url.startswith("/") and not next_url.startswith("//"):
                     return redirect(next_url)
                 return redirect(url_for("map.map_page"))
             error = "Invalid email or password."

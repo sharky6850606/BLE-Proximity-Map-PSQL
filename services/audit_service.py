@@ -1,7 +1,7 @@
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, A4
@@ -38,12 +38,16 @@ def _ensure_dir(path):
 
 def _local_dt_from_unix(ts=None):
     ts = time.time() if ts is None else ts
-    return datetime.utcfromtimestamp(float(ts)) + timedelta(hours=SAMOA_OFFSET_HOURS)
+    return (
+        datetime.fromtimestamp(float(ts), timezone.utc)
+        .replace(tzinfo=None)
+        + timedelta(hours=SAMOA_OFFSET_HOURS)
+    )
 
 
 def _unix_from_local_dt(local_dt):
     utc_dt = local_dt - timedelta(hours=SAMOA_OFFSET_HOURS)
-    return int(utc_dt.timestamp())
+    return int(utc_dt.replace(tzinfo=timezone.utc).timestamp())
 
 
 def _parse_clock(value, fallback_hour, fallback_minute):
@@ -498,6 +502,7 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                         event_time=now_label,
                         device_ident=expected_device_ident or (customer_devices[0] if customer_devices else None),
                         distance=None,
+                        conn=conn,
                     )
                 conn.execute(
                     f"UPDATE customer_assets SET status={ph}, missing_since={ph}, found_at=NULL WHERE id={ph}",
@@ -511,6 +516,7 @@ def run_customer_audit(customer_id, scheduled_local_dt=None):
                         event_time=_fmt_ts(last_seen_ts) or now_label,
                         device_ident=last_seen_device,
                         distance=distance,
+                        conn=conn,
                     )
                 moved_since = missing_since if previous_status == "equipment_moved" and missing_since else now_label
                 conn.execute(
@@ -1101,6 +1107,7 @@ def mark_asset_found_if_missing(conn, beacon_id, device_ident, seen_ts, distance
             event_time=found_at,
             device_ident=device_ident,
             distance=distance,
+            conn=conn,
         )
 
 
@@ -1119,5 +1126,5 @@ def _audit_loop():
 def start_audit_thread():
     t = threading.Thread(target=_audit_loop, daemon=True)
     t.start()
-    print("[audit] thread started ✅")
+    print("[audit] thread started")
     return t

@@ -7,8 +7,10 @@ def _db_ph(conn):
     return "%s" if getattr(conn, "backend", "postgres") == "postgres" else "?"
 
 
-def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, distance=None):
-    conn = get_db()
+def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, distance=None, conn=None):
+    """Persist a notification, optionally inside the caller's transaction."""
+    owns_connection = conn is None
+    conn = conn if conn is not None else get_db()
     try:
         event_time = event_time or format_samoa_time(time.time())
         ph = _db_ph(conn)
@@ -28,6 +30,8 @@ def emit_notification(ntype, beacon_id, event_time=None, device_ident=None, dist
                 distance,
             ),
         )
-        conn.commit()
+        if owns_connection:
+            conn.commit()
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()

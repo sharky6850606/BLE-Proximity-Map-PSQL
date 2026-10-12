@@ -141,18 +141,6 @@ def init_db():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_device_observations_lookup ON device_observations(device_ident, observed_ts)")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS fmc_offline_alerts (
-                    id BIGSERIAL PRIMARY KEY,
-                    customer_id BIGINT REFERENCES customers(id),
-                    device_ident TEXT NOT NULL,
-                    offline_since_ts BIGINT,
-                    alert_sent_at TEXT,
-                    recovered_at TEXT,
-                    UNIQUE(customer_id, device_ident)
-                )
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
 
             # notifications
             cur.execute("""
@@ -236,6 +224,20 @@ def init_db():
                     created_at TEXT
                 )
             """)
+            # This table references customers, so it must be created after the
+            # customers table on a brand-new PostgreSQL database.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fmc_offline_alerts (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id BIGINT REFERENCES customers(id),
+                    device_ident TEXT NOT NULL,
+                    offline_since_ts BIGINT,
+                    alert_sent_at TEXT,
+                    recovered_at TEXT,
+                    UNIQUE(customer_id, device_ident)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_fmc_offline_alerts_customer ON fmc_offline_alerts(customer_id)")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_users (
                     id BIGSERIAL PRIMARY KEY,
@@ -407,7 +409,7 @@ def init_db():
 
             _seed_default_admin(conn, cur)
             conn.commit()
-            print("[init_db] postgres schema ready ✅")
+            print("[init_db] postgres schema ready")
             return
 
         # SQLite fallback
@@ -737,7 +739,7 @@ def init_db():
 
         _seed_default_admin(conn, cur)
         conn.commit()
-        print("[init_db] sqlite schema ready ✅")
+        print("[init_db] sqlite schema ready")
     finally:
         try:
             cur.close()

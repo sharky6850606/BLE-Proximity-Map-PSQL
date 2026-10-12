@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from config import SAMOA_OFFSET_HOURS, TTL_SECONDS, TX_POWER, PATH_LOSS_N
 
@@ -8,7 +8,7 @@ _beacon_state = {}    # (device_ident, beacon_id) -> beacon snapshot
 
 
 def format_samoa_time(ts: float) -> str:
-    dt = datetime.utcfromtimestamp(float(ts)) + timedelta(hours=SAMOA_OFFSET_HOURS)
+    dt = datetime.fromtimestamp(float(ts), timezone.utc) + timedelta(hours=SAMOA_OFFSET_HOURS)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 

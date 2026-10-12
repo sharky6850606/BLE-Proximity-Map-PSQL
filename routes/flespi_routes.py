@@ -1,7 +1,8 @@
+import hmac
 import time
 from flask import Blueprint, request
 
-from config import FMC_OFFLINE_ALERT_AFTER_SECONDS
+from config import FLESPI_WEBHOOK_SECRET, FMC_OFFLINE_ALERT_AFTER_SECONDS
 from database import get_db
 from services.beacon_logic import simplify_message, latest_messages
 from services.audit_service import mark_asset_found_if_missing
@@ -29,6 +30,11 @@ def _db_ph(conn):
 
 @flespi_bp.route("/flespi", methods=["POST"])
 def flespi_receiver():
+    if FLESPI_WEBHOOK_SECRET:
+        supplied_secret = request.headers.get("X-Webhook-Secret", "")
+        if not hmac.compare_digest(supplied_secret, FLESPI_WEBHOOK_SECRET):
+            return "Unauthorized", 401
+
     payload = request.get_json(silent=True)
     msgs = _extract_messages(payload)
     if not msgs:

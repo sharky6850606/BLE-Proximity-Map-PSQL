@@ -56,6 +56,11 @@ N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "").strip()
 N8N_WEBHOOK_TIMEOUT = int(os.getenv("N8N_WEBHOOK_TIMEOUT", "20"))
 
 # =============================
+# Flespi ingestion
+# =============================
+FLESPI_WEBHOOK_SECRET = os.getenv("FLESPI_WEBHOOK_SECRET", "").strip()
+
+# =============================
 # Real-time FMC offline alerts
 # =============================
 FMC_OFFLINE_ALERT_AFTER_SECONDS = int(os.getenv("FMC_OFFLINE_ALERT_AFTER_SECONDS", "600"))

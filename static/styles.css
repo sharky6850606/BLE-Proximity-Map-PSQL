@@ -606,6 +606,42 @@ html, body {
   margin-bottom: 8px;
 }
 
+.header-title-block {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-brand-logo {
+  width: 50px;
+  height: 34px;
+  flex: 0 0 50px;
+  object-fit: contain;
+}
+
+.header-brand-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+.header-brand-copy strong {
+  color: #f8fafc;
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+}
+
+.header-brand-copy span {
+  color: #38bdf8;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
 .device-block-offline {
   border-color: rgba(239,68,68,0.75);
   background: #151923;

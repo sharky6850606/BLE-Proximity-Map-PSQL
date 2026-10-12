@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Admin - BLE Proximity Map</title>
+  <title>Admin - SkyEye BLE</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='skyeye-ble-logo.png') }}" />
   <style>
     :root {
       color-scheme: dark;
@@ -96,6 +97,8 @@
       color: var(--text);
       min-height: 36px;
     }
+    .admin-brand { display: flex; align-items: center; gap: 12px; }
+    .admin-brand-logo { width: 72px; height: 48px; object-fit: contain; }
     textarea { resize: vertical; min-height: 68px; }
     input::placeholder { color: #8b93a3; }
 
@@ -309,9 +312,12 @@
 
   <main class="admin-shell">
     <div class="topbar">
-      <div>
-        <h1>Admin Console</h1>
-        <div class="subtitle">Manage customers, users, device access, expected assets, and audit reporting.</div>
+      <div class="admin-brand">
+        <img class="admin-brand-logo" src="{{ url_for('static', filename='skyeye-ble-logo.png') }}" alt="SkyEye" />
+        <div>
+          <h1>SkyEye Admin Console</h1>
+          <div class="subtitle">Manage customers, users, device access, expected assets, and audit reporting.</div>
+        </div>
       </div>
       <div class="top-links">
         <a href="{{ url_for('map.map_page') }}">Map</a>

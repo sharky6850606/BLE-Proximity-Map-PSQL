@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>BLE Proximity Map</title>
+    <title>SkyEye BLE Proximity Map</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='skyeye-ble-logo.png') }}" />
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -37,7 +38,11 @@
       <div id="sidebar-header">
         <button id="menu-button" class="header-menu-btn">☰</button>
         <div class="header-title-block">
-          <h1>BLE Proximity Map</h1>
+          <img class="header-brand-logo" src="{{ url_for('static', filename='skyeye-ble-logo.png') }}" alt="" />
+          <div class="header-brand-copy">
+            <strong>SkyEye</strong>
+            <span>BLE Map</span>
+          </div>
         </div>
         {% if is_admin_user %}
         <a class="header-admin-link" href="{{ url_for('admin.dashboard') }}">Admin</a>
