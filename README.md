@@ -69,7 +69,9 @@ When an assigned FMC has not reported for the configured offline interval, all
 active users for that customer receive an email with the site, device identifier,
 last heartbeat, outage duration, and suggested checks. The existing optional
 WhatsApp alert is sent as well. Each channel is attempted once per outage and the
-incident lock resets after the FMC reports again.
+incident lock resets after the FMC reports again. When reporting resumes, all
+active users for that customer receive one recovery email with the reconnection
+time and approximate outage duration.
 
 The latest verified baseline and outstanding limitations are recorded in
 `docs/HEALTH_CHECK_2026-10-07.md`.

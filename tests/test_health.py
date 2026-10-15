@@ -507,27 +507,47 @@ class ApplicationHealthTests(unittest.TestCase):
             self.assertEqual(check_and_send_fmc_offline_alerts(), 1)
             self.assertEqual(check_and_send_fmc_offline_alerts(), 0)
 
-        self.assertEqual(send_email.call_count, 1)
+            conn = get_db()
+            try:
+                conn.execute(
+                    "UPDATE device_states SET state=?, online=?, last_seen_ts=? WHERE device_ident=?",
+                    ("online", 1, int(time.time()), "FMC-HEALTH-1"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            self.assertEqual(check_and_send_fmc_offline_alerts(), 1)
+            self.assertEqual(check_and_send_fmc_offline_alerts(), 0)
+
+        self.assertEqual(send_email.call_count, 2)
         self.assertEqual(send_whatsapp.call_count, 1)
-        recipients, subject, body = send_email.call_args.args
+        recipients, subject, body = send_email.call_args_list[0].args
         self.assertEqual(recipients, ["customer@example.test"])
         self.assertEqual(subject, "Device offline - Main Site")
         self.assertIn("Please check the FMC power, SIM/data connection", body)
+        recovery_recipients, recovery_subject, recovery_body = send_email.call_args_list[1].args
+        self.assertEqual(recovery_recipients, ["customer@example.test"])
+        self.assertEqual(recovery_subject, "Device online again - Main Site")
+        self.assertIn("Monitoring has resumed", recovery_body)
 
         conn = get_db()
         try:
-            email_log = conn.execute(
-                "SELECT send_type, status FROM email_logs WHERE customer_id=? AND send_type=?",
-                (customer_id, "fmc_offline"),
-            ).fetchone()
+            email_logs = conn.execute(
+                "SELECT send_type, status FROM email_logs WHERE customer_id=? ORDER BY id",
+                (customer_id,),
+            ).fetchall()
             incident_count = conn.execute(
                 "SELECT COUNT(*) FROM fmc_offline_alerts WHERE customer_id=?",
                 (customer_id,),
             ).fetchone()[0]
         finally:
             conn.close()
-        self.assertEqual(tuple(email_log), ("fmc_offline", "sent"))
-        self.assertEqual(incident_count, 1)
+        self.assertEqual(
+            [tuple(row) for row in email_logs],
+            [("fmc_offline", "sent"), ("fmc_online", "sent")],
+        )
+        self.assertEqual(incident_count, 0)
 
 
 if __name__ == "__main__":

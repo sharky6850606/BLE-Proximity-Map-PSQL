@@ -71,7 +71,7 @@ def _customer_email_recipients(conn, customer_id):
     return [str(row[0]).strip() for row in rows if row and row[0] and str(row[0]).strip()]
 
 
-def _insert_email_log(conn, customer_id, recipient, subject, result):
+def _insert_email_log(conn, customer_id, recipient, subject, result, send_type="fmc_offline"):
     ph = _ph(conn)
     conn.execute(
         f"INSERT INTO email_logs "
@@ -88,11 +88,73 @@ def _insert_email_log(conn, customer_id, recipient, subject, result):
             result.get("status"),
             result.get("error") or "",
             None,
-            "fmc_offline",
+            send_type,
             None,
             None,
         ),
     )
+
+
+def _send_recovery_emails(conn, cutoff):
+    """Email customers once when an offline device starts reporting again."""
+    ph = _ph(conn)
+    rows = conn.execute(
+        f"SELECT foa.id, foa.customer_id, foa.device_ident, foa.offline_since_ts, "
+        f"c.name, cd.label, cds.name, d.name, ds.last_seen_ts "
+        f"FROM fmc_offline_alerts foa "
+        f"JOIN customers c ON c.id=foa.customer_id "
+        f"JOIN customer_devices cd ON cd.customer_id=foa.customer_id AND cd.device_ident=foa.device_ident "
+        f"LEFT JOIN customer_device_settings cds ON cds.customer_id=foa.customer_id AND cds.device_ident=foa.device_ident "
+        f"LEFT JOIN devices d ON d.id=foa.device_ident "
+        f"JOIN device_states ds ON ds.device_ident=foa.device_ident "
+        f"WHERE c.active=1 AND ds.last_seen_ts IS NOT NULL AND ds.last_seen_ts>{ph} "
+        f"ORDER BY foa.customer_id, foa.device_ident",
+        (cutoff,),
+    ).fetchall()
+
+    sent = 0
+    for alert_id, customer_id, device_ident, offline_since_ts, customer_name, label, setting_name, global_name, recovered_ts in rows:
+        site_name = _device_label(label, setting_name, global_name, device_ident)
+        recovered_label = format_samoa_time(recovered_ts)
+        offline_label = format_samoa_time(offline_since_ts) if offline_since_ts else "Unknown"
+        outage_seconds = (
+            max(0, int(recovered_ts) - int(offline_since_ts))
+            if recovered_ts is not None and offline_since_ts is not None
+            else 0
+        )
+        body = (
+            f"Device online again for {customer_name}\n"
+            f"Site: {site_name}\n"
+            f"Device IMEI: {device_ident}\n"
+            f"Offline since: {offline_label} Samoa time\n"
+            f"Reconnected: {recovered_label} Samoa time\n"
+            f"Approximate outage: {_duration_label(outage_seconds)}\n\n"
+            "Monitoring has resumed. Please confirm the device and beacon data are updating normally."
+        )
+        subject = f"Device online again - {site_name}"
+        recipients = _customer_email_recipients(conn, customer_id)
+        results = send_report_email_with_results(recipients, subject, body)
+        if not results:
+            _insert_email_log(
+                conn,
+                customer_id,
+                "",
+                subject,
+                {"provider": "smtp", "status": "skipped", "error": "No active customer recipients"},
+                send_type="fmc_online",
+            )
+        for result in results:
+            _insert_email_log(
+                conn,
+                customer_id,
+                result.get("recipient") or "",
+                subject,
+                result,
+                send_type="fmc_online",
+            )
+        sent += int(any(result.get("status") == "sent" for result in results))
+        conn.execute(f"DELETE FROM fmc_offline_alerts WHERE id={ph}", (alert_id,))
+    return sent
 
 
 def _build_payload(customer_id, customer_name, customer_slug, recipients, device_ident, site_name, last_seen_ts):
@@ -133,23 +195,14 @@ def _build_payload(customer_id, customer_name, customer_slug, recipients, device
 
 
 def check_and_send_fmc_offline_alerts():
-    """Send one email and optional WhatsApp alert per customer/device outage."""
+    """Send customer email alerts for device outages and recoveries."""
     now_ts = int(time.time())
     cutoff = now_ts - int(FMC_OFFLINE_ALERT_AFTER_SECONDS)
     conn = get_db()
     try:
         ph = _ph(conn)
 
-        # Clear incident locks when a device is healthy again.
-        conn.execute(
-            f"DELETE FROM fmc_offline_alerts "
-            f"WHERE EXISTS ("
-            f"  SELECT 1 FROM device_states ds "
-            f"  WHERE ds.device_ident = fmc_offline_alerts.device_ident "
-            f"  AND ds.last_seen_ts IS NOT NULL AND ds.last_seen_ts > {ph}"
-            f")",
-            (cutoff,),
-        )
+        sent = _send_recovery_emails(conn, cutoff)
 
         rows = conn.execute(
             f"SELECT c.id, c.name, c.slug, c.whatsapp_recipients, cd.device_ident, cd.label, "
@@ -167,7 +220,6 @@ def check_and_send_fmc_offline_alerts():
             (cutoff,),
         ).fetchall()
 
-        sent = 0
         for customer_id, customer_name, slug, recipient_text, device_ident, label, setting_name, global_name, last_seen_ts in rows:
             recipients = _split_recipients(recipient_text)
             site_name = _device_label(label, setting_name, global_name, device_ident)
